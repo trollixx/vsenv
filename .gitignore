@@ -1,0 +1,8 @@
+/vsenv
+/vsenv.exe
+*.test
+*.out
+coverage.txt
+.vscode/
+.idea/
+*.swp
