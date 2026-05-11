@@ -8,9 +8,31 @@ Visual Studio environment activator that works in cmd, PowerShell, nushell, bash
 
 `vcvars*.bat` and `Enter-VsDevShell` only work in cmd and PowerShell. `vsenv` provides the same environment to any shell by capturing it once and reading from cache thereafter.
 
-## Build
+## Install
 
+### Download a release (recommended)
+
+Grab `vsenv-amd64.exe` (or `vsenv-arm64.exe` on ARM) from the [latest release](https://github.com/trollixx/vsenv/releases/latest) and drop it somewhere on your `PATH`.
+
+Or with the `gh` CLI:
+
+```sh
+gh release download --repo trollixx/vsenv --pattern vsenv-amd64.exe --output ~/bin/vsenv.exe
 ```
+
+### Via `go install`
+
+```sh
+go install github.com/trollixx/vsenv@latest
+```
+
+Builds from source, lands in `$GOPATH/bin`. Reports `0.1.0-dev` as the version since release-time ldflags aren't applied to local builds.
+
+### From source
+
+```sh
+git clone https://github.com/trollixx/vsenv
+cd vsenv
 go build -o vsenv.exe
 ```
 
