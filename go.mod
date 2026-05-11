@@ -1,4 +1,4 @@
-module vsenv
+module github.com/trollixx/vsenv
 
 go 1.26
 
