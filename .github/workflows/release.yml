@@ -1,0 +1,36 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build binaries
+        shell: bash
+        env:
+          GOOS: windows
+          VERSION: ${{ github.ref_name }}
+        run: |
+          GOARCH=amd64 go build -ldflags "-X main.version=$VERSION" -o vsenv-amd64.exe .
+          GOARCH=arm64 go build -ldflags "-X main.version=$VERSION" -o vsenv-arm64.exe .
+
+      - name: Create release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" vsenv-amd64.exe vsenv-arm64.exe --generate-notes

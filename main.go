@@ -10,10 +10,11 @@ import (
 )
 
 const (
-	version       = "0.1.0-dev"
 	defaultArch   = "x64"
 	shellFlagName = "shell"
 )
+
+var version = "0.1.0-dev" // injected at build time via -ldflags "-X main.version=..."
 
 func main() {
 	cmd := &cli.Command{
