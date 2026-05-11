@@ -1,5 +1,9 @@
 # vsenv
 
+[![CI](https://img.shields.io/github/actions/workflow/status/trollixx/vsenv/ci.yml?branch=main&label=ci)](https://github.com/trollixx/vsenv/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/trollixx/vsenv)](https://github.com/trollixx/vsenv/releases)
+[![License](https://img.shields.io/github/license/trollixx/vsenv)](LICENSE)
+
 Visual Studio environment activator that works in cmd, PowerShell, nushell, bash, and fish.
 
 `vcvars*.bat` and `Enter-VsDevShell` only work in cmd and PowerShell. `vsenv` provides the same environment to any shell by capturing it once and reading from cache thereafter.
