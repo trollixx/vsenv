@@ -1,8 +1,8 @@
 # vsenv
 
-[![CI](https://img.shields.io/github/actions/workflow/status/trollixx/vsenv/ci.yml?branch=main&label=ci)](https://github.com/trollixx/vsenv/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/trollixx/vsenv)](https://github.com/trollixx/vsenv/releases)
-[![License](https://img.shields.io/github/license/trollixx/vsenv)](LICENSE)
+[![CI](https://img.shields.io/github/actions/workflow/status/trollixx/vsenv/ci.yml?branch=main&label=ci&style=flat-square)](https://github.com/trollixx/vsenv/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/trollixx/vsenv?style=flat-square)](https://github.com/trollixx/vsenv/releases)
+[![License](https://img.shields.io/github/license/trollixx/vsenv?style=flat-square)](LICENSE)
 
 Visual Studio environment activator that works in cmd, PowerShell, nushell, bash, and fish.
 
