@@ -6,9 +6,27 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 )
+
+// ignoreCtrlC toggles the calling process's CTRL+C disposition via
+// SetConsoleCtrlHandler(NULL, ignore). When set, the OS does not deliver
+// CTRL_C_EVENT to this process, so Go's runtime handler never fires for
+// Ctrl+C. We use this while a child shell is running — without it, Go's
+// CTRL_C_EVENT dispatch (even with [signal.Ignore]) disturbs interactive
+// shells like nushell when they Ctrl+C a grandchild process, leaving
+// stdin corrupted afterward.
+func ignoreCtrlC(ignore bool) {
+	var add uintptr
+	if ignore {
+		add = 1
+	}
+	proc := syscall.NewLazyDLL("kernel32.dll").NewProc("SetConsoleCtrlHandler")
+	_, _, _ = proc.Call(0, add)
+}
 
 func mergedEnv(diff map[string]string) []string {
 	parent := os.Environ()
@@ -119,5 +137,19 @@ func spawnShell(ctx context.Context, shell string, diff map[string]string) error
 	if autoDetected {
 		fmt.Fprintf(os.Stderr, "[vsenv] launching %s (auto-detected; override with --shell)\n", shell)
 	}
-	return cmd.Run()
+	// Belt: ignore SIGINT at the Go level so Ctrl+Break (mapped to SIGINT by
+	// the Go runtime) doesn't terminate us, and to cover the microsecond
+	// window before SetConsoleCtrlHandler takes effect below.
+	signal.Ignore(os.Interrupt)
+	defer signal.Reset(os.Interrupt)
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	// Suspenders: after the child is spawned (so it doesn't inherit the
+	// disposition), tell Windows to suppress CTRL_C_EVENT delivery to us
+	// entirely. Without this, Go's CTRL_C_EVENT handler running in vsenv
+	// corrupts interactive shells (e.g. nushell) when they Ctrl+C a child.
+	ignoreCtrlC(true)
+	defer ignoreCtrlC(false)
+	return cmd.Wait()
 }
