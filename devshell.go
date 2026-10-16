@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"golang.org/x/sys/windows"
 )
 
 const (
@@ -51,10 +53,28 @@ func (e devEnv) path(cur string) string {
 	return strings.Join(parts, string(os.PathListSeparator))
 }
 
+// baseEnv returns the environment a new process of the current user starts
+// with, built from the registry rather than inherited. Capturing against it
+// keeps the cache independent of the shell that happens to build it, which
+// may already have the VS environment loaded.
+func baseEnv() []string {
+	var tok windows.Token
+	// CreateEnvironmentBlock needs query and duplicate access to a primary token.
+	if err := windows.OpenProcessToken(windows.CurrentProcess(),
+		windows.TOKEN_QUERY|windows.TOKEN_DUPLICATE, &tok); err == nil {
+		defer func() { _ = tok.Close() }()
+		if env, envErr := tok.Environ(false); envErr == nil {
+			return env
+		}
+	}
+	return os.Environ()
+}
+
 func captureDevShellEnv(
 	ctx context.Context,
 	install *Install,
 	arch, hostArch, devArgs string,
+	base []string,
 ) (map[string]string, error) {
 	vsdevcmd := filepath.Join(install.InstallationPath, "Common7", "Tools", "VsDevCmd.bat")
 	if _, err := os.Stat(vsdevcmd); err != nil {
@@ -79,7 +99,7 @@ func captureDevShellEnv(
 	// The opt-out is set even over a user's own value, which could be empty
 	// (VsDevCmd only skips telemetry for a non-empty one), and is dropped from
 	// the result, so it doesn't override that value later.
-	c.Env = append(os.Environ(), telemetryOptOut+"=1")
+	c.Env = append(slices.Clone(base), telemetryOptOut+"=1")
 	var out bytes.Buffer
 	c.Stdout = &out
 	c.Stderr = &out
@@ -136,19 +156,22 @@ func parseSetOutput(out string) (map[string]string, error) {
 	return env, nil
 }
 
-func diffEnv(parent, full map[string]string) devEnv {
+func diffEnv(base, full map[string]string) devEnv {
 	e := devEnv{Vars: map[string]string{}}
 	for k, v := range full {
 		// The __VSCMD_PREINIT_ variables hold the environment VsDevCmd started
-		// from; replayed later they'd be stale.
-		if strings.EqualFold(k, "PATH") || strings.HasPrefix(strings.ToUpper(k), preinitPrefix) {
+		// from; replayed later they'd be stale. cmd.exe sets PROMPT itself when
+		// it's missing, as it is from the default environment, and applying it
+		// would reset a custom cmd prompt.
+		if strings.EqualFold(k, "PATH") || strings.EqualFold(k, "PROMPT") ||
+			strings.HasPrefix(strings.ToUpper(k), preinitPrefix) {
 			continue
 		}
-		if pv, ok := parent[k]; !ok || pv != v {
+		if bv, ok := base[k]; !ok || bv != v {
 			e.Vars[k] = v
 		}
 	}
-	e.PathBefore, e.PathAfter = addedPathEntries(lookupFold(parent, "PATH"), lookupFold(full, "PATH"))
+	e.PathBefore, e.PathAfter = addedPathEntries(lookupFold(base, "PATH"), lookupFold(full, "PATH"))
 	return e
 }
 
@@ -210,9 +233,9 @@ func lookupFold(m map[string]string, key string) string {
 	return ""
 }
 
-func parentEnvMap() map[string]string {
+func envMap(env []string) map[string]string {
 	m := map[string]string{}
-	for _, e := range os.Environ() {
+	for _, e := range env {
 		k, v, hasEq := strings.Cut(e, "=")
 		if !hasEq || k == "" {
 			continue

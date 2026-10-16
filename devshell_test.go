@@ -201,6 +201,13 @@ func TestDevEnvPath_SwitchingArchPutsItsToolsFirst(t *testing.T) {
 	}
 }
 
+func TestDiffEnv_DropsCmdPrompt(t *testing.T) {
+	diff := diffEnv(map[string]string{}, map[string]string{"PROMPT": "$P$G", "X": "1"})
+	if len(diff.Vars) != 1 || diff.Vars["X"] != "1" {
+		t.Errorf("expected only X in diff, got %v", diff.Vars)
+	}
+}
+
 func TestDiffEnv_DropsPreinitVars(t *testing.T) {
 	full := map[string]string{"__VSCMD_PREINIT_PATH": `C:\a`, "__VSCMD_PREINIT_INCLUDE": `C:\inc`, "X": "1"}
 	diff := diffEnv(map[string]string{}, full)
@@ -245,17 +252,20 @@ func TestWriteTempBat(t *testing.T) {
 	}
 }
 
-func TestParentEnvMap_RoundTrip(t *testing.T) {
-	m := parentEnvMap()
-	if len(m) == 0 {
-		t.Fatal("parent env should not be empty")
+func TestEnvMap(t *testing.T) {
+	m := envMap([]string{"A=1", "B=x=y", "=C:=C:\\", "junk"})
+	if len(m) != 2 || m["A"] != "1" || m["B"] != "x=y" {
+		t.Errorf("envMap = %v", m)
 	}
-	for _, e := range []string{"PATH", "Path"} {
-		if v, ok := m[e]; ok {
-			if !strings.Contains(strings.ToLower(v), `\`) {
-				t.Logf("PATH does not contain backslash; on Windows that is unusual: %q", v)
-			}
-			return
-		}
+}
+
+func TestBaseEnv_IsTheUsersDefault(t *testing.T) {
+	t.Setenv("VSENV_TEST_PROCESS_ONLY", "1")
+	m := envMap(baseEnv())
+	if lookupFold(m, "SystemRoot") == "" || lookupFold(m, "PATH") == "" {
+		t.Errorf("base env lacks SystemRoot or PATH: %v", m)
+	}
+	if _, ok := m["VSENV_TEST_PROCESS_ONLY"]; ok {
+		t.Error("base env should not inherit this process's variables")
 	}
 }

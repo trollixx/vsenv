@@ -105,14 +105,14 @@ func TestIntegration_CaptureDevShellEnv(t *testing.T) {
 	requireVS(t)
 	install := firstInstall(t)
 
-	env, err := captureDevShellEnv(context.Background(), install, "x64", "x64", "")
+	env, err := captureDevShellEnv(context.Background(), install, "x64", "x64", "", baseEnv())
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	requiredKeys := []string{"VSINSTALLDIR", "VCINSTALLDIR", "INCLUDE", "LIB", "PATH", "VSCMD_VER"}
 	for _, k := range requiredKeys {
-		if _, ok := env[k]; !ok {
+		if lookupFold(env, k) == "" {
 			t.Errorf("missing expected env var %s in VsDevCmd output", k)
 		}
 	}
@@ -123,6 +123,45 @@ func TestIntegration_CaptureDevShellEnv(t *testing.T) {
 
 	if _, leaked := env[telemetryOptOut]; leaked {
 		t.Errorf("%s leaked into the captured env", telemetryOptOut)
+	}
+}
+
+func TestIntegration_GetEnv_FromLoadedShell(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping (slow: runs VsDevCmd twice)")
+	}
+	requireVS(t)
+	t.Setenv("LOCALAPPDATA", t.TempDir())
+
+	install, err := SelectInstall(context.Background(), "")
+	if err != nil {
+		t.Skipf("no install: %v", err)
+	}
+	clean, err := GetEnv(context.Background(), install, "x64", "x64", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Rebuild the cache from a process that already has the VS environment,
+	// as after 'vsenv refresh' in a shell whose profile loaded it.
+	for _, kv := range mergedEnv(clean) {
+		if k, v, ok := strings.Cut(kv, "="); ok && k != "" {
+			t.Setenv(k, v)
+		}
+	}
+	if clearErr := ClearEnvCache(); clearErr != nil {
+		t.Fatal(clearErr)
+	}
+	loaded, err := GetEnv(context.Background(), install, "x64", "x64", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(loaded.Vars) != len(clean.Vars) || loaded.Vars["VSINSTALLDIR"] != clean.Vars["VSINSTALLDIR"] {
+		t.Errorf("capture depends on the calling shell: %d vars vs %d clean", len(loaded.Vars), len(clean.Vars))
+	}
+	if !slices.Equal(loaded.PathBefore, clean.PathBefore) || !slices.Equal(loaded.PathAfter, clean.PathAfter) {
+		t.Errorf("PATH entries differ:\nloaded %q\nclean  %q", loaded.PathBefore, clean.PathBefore)
 	}
 }
 
