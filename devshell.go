@@ -12,7 +12,12 @@ import (
 	"strings"
 )
 
-const envSentinel = "==VSENV_BEGIN=="
+const (
+	envSentinel = "==VSENV_BEGIN=="
+	// telemetryOptOut stops VsDevCmd.bat from launching PowerShell to send
+	// usage telemetry.
+	telemetryOptOut = "VSCMD_SKIP_SENDTELEMETRY"
+)
 
 func captureDevShellEnv(
 	ctx context.Context,
@@ -39,6 +44,10 @@ func captureDevShellEnv(
 	defer func() { _ = os.Remove(bat) }()
 
 	c := exec.CommandContext(ctx, "cmd.exe", "/d", "/c", bat)
+	// The opt-out is set even over a user's own value, which could be empty
+	// (VsDevCmd only skips telemetry for a non-empty one), and is dropped from
+	// the result, so it doesn't override that value later.
+	c.Env = append(os.Environ(), telemetryOptOut+"=1")
 	var out bytes.Buffer
 	c.Stdout = &out
 	c.Stderr = &out
@@ -46,7 +55,12 @@ func captureDevShellEnv(
 		return nil, fmt.Errorf("VsDevCmd.bat failed: %w\noutput:\n%s", runErr, out.String())
 	}
 
-	return parseSetOutput(out.String())
+	env, err := parseSetOutput(out.String())
+	if err != nil {
+		return nil, err
+	}
+	delete(env, telemetryOptOut)
+	return env, nil
 }
 
 func writeTempBat(vsdevcmd string, args []string) (string, error) {

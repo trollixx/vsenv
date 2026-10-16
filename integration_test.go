@@ -119,6 +119,10 @@ func TestIntegration_CaptureDevShellEnv(t *testing.T) {
 	if v := env["VSCMD_ARG_TGT_ARCH"]; v != "x64" {
 		t.Errorf("VSCMD_ARG_TGT_ARCH = %q, want x64", v)
 	}
+
+	if _, leaked := env[telemetryOptOut]; leaked {
+		t.Errorf("%s leaked into the captured env", telemetryOptOut)
+	}
 }
 
 func TestIntegration_GetEnv_FullPipeline(t *testing.T) {
