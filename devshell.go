@@ -112,7 +112,33 @@ func captureDevShellEnv(
 		return nil, err
 	}
 	delete(env, telemetryOptOut)
-	return env, nil
+	return env, checkCompiler(env)
+}
+
+// checkCompiler fails if VsDevCmd.bat set up a C++ toolset without a compiler
+// for the requested architectures. VsDevCmd.bat doesn't report that; the
+// compiler for the host architecture just ends up first on PATH instead.
+func checkCompiler(env map[string]string) error {
+	tools := lookupFold(env, "VCToolsInstallDir")
+	host := lookupFold(env, "VSCMD_ARG_HOST_ARCH")
+	tgt := lookupFold(env, "VSCMD_ARG_TGT_ARCH")
+	if tools == "" || host == "" || tgt == "" {
+		return nil // no C++ toolset to check
+	}
+	hostDir := filepath.Join(tools, "bin", "Host"+host)
+	if !exists(hostDir) {
+		return nil // a layout without Host<arch> dirs, like the VS 2015 (v140) toolset's
+	}
+	if cl := filepath.Join(hostDir, tgt, "cl.exe"); !exists(cl) {
+		return fmt.Errorf("this install has no MSVC compiler targeting %s on %s (%s not found); "+
+			"add the C++ build tools for %s in the Visual Studio Installer", tgt, host, cl, tgt)
+	}
+	return nil
+}
+
+func exists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 func writeTempBat(vsdevcmd string, args []string) (string, error) {

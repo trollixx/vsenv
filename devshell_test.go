@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -213,6 +214,39 @@ func TestDiffEnv_DropsPreinitVars(t *testing.T) {
 	diff := diffEnv(map[string]string{}, full)
 	if len(diff.Vars) != 1 || diff.Vars["X"] != "1" {
 		t.Errorf("expected only X in diff, got %v", diff.Vars)
+	}
+}
+
+func TestCheckCompiler(t *testing.T) {
+	tools := t.TempDir()
+	cl := filepath.Join(tools, "bin", "HostX64", "x64", "cl.exe")
+	if err := os.MkdirAll(filepath.Dir(cl), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cl, []byte("MZ"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	env := func(tgt string) map[string]string {
+		return map[string]string{
+			"VCToolsInstallDir":   tools + `\`,
+			"VSCMD_ARG_HOST_ARCH": "x64",
+			"VSCMD_ARG_TGT_ARCH":  tgt,
+		}
+	}
+	if err := checkCompiler(env("x64")); err != nil {
+		t.Errorf("x64: %v", err)
+	}
+	if err := checkCompiler(env("arm64")); err == nil {
+		t.Error("arm64: expected an error for the missing cross compiler")
+	}
+	if err := checkCompiler(map[string]string{"VSCMD_ARG_TGT_ARCH": "arm64"}); err != nil {
+		t.Errorf("no C++ toolset: %v", err)
+	}
+	// The VS 2015 toolset (-vcvars_ver=14.0) keeps its compilers in VC\bin.
+	v140 := env("x64")
+	v140["VCToolsInstallDir"] = t.TempDir() + `\`
+	if err := checkCompiler(v140); err != nil {
+		t.Errorf("v140 layout: %v", err)
 	}
 }
 
