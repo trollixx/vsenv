@@ -30,7 +30,7 @@ func formatEnv(shell string, env map[string]string, w io.Writer) error {
 		}
 	case "fish":
 		for _, k := range keys {
-			fmt.Fprintf(w, "set -gx %s %s\n", k, shQuote(env[k]))
+			fmt.Fprintf(w, "set -gx %s %s\n", k, fishQuote(env[k]))
 		}
 	case "nu", "nushell":
 		return json.NewEncoder(w).Encode(env)
@@ -46,4 +46,10 @@ func psQuote(s string) string {
 
 func shQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// fishQuote quotes for fish, where \\ and \' are escapes even inside single
+// quotes, so a value ending in a backslash would otherwise eat the quote.
+func fishQuote(s string) string {
+	return "'" + strings.NewReplacer(`\`, `\\`, `'`, `\'`).Replace(s) + "'"
 }

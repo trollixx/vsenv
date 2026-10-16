@@ -47,8 +47,8 @@ func TestFormatEnv_Bash(t *testing.T) {
 }
 
 func TestFormatEnv_Fish(t *testing.T) {
-	out := formatTo(t, "fish", map[string]string{"FOO": "bar"})
-	if out != "set -gx FOO 'bar'\n" {
+	out := formatTo(t, "fish", map[string]string{"VSINSTALLDIR": `C:\VS\`})
+	if out != "set -gx VSINSTALLDIR 'C:\\\\VS\\\\'\n" {
 		t.Errorf("unexpected fish output: %q", out)
 	}
 }
@@ -116,6 +116,21 @@ func TestShQuote(t *testing.T) {
 	for in, want := range cases {
 		if got := shQuote(in); got != want {
 			t.Errorf("shQuote(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestFishQuote(t *testing.T) {
+	cases := map[string]string{
+		"":        "''",
+		"foo":     "'foo'",
+		"it's":    `'it\'s'`,
+		`C:\dir\`: `'C:\\dir\\'`,
+		"$HOME":   "'$HOME'",
+	}
+	for in, want := range cases {
+		if got := fishQuote(in); got != want {
+			t.Errorf("fishQuote(%q) = %q, want %q", in, got, want)
 		}
 	}
 }
