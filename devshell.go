@@ -18,6 +18,9 @@ const (
 	// telemetryOptOut stops VsDevCmd.bat from launching PowerShell to send
 	// usage telemetry.
 	telemetryOptOut = "VSCMD_SKIP_SENDTELEMETRY"
+	// preinitPrefix starts the names of VsDevCmd's copies of the variables it
+	// started from, which VsDevCmd -clean_env restores.
+	preinitPrefix = "__VSCMD_PREINIT_"
 )
 
 // devEnv is what VsDevCmd.bat adds to the environment it started from. PATH
@@ -136,7 +139,9 @@ func parseSetOutput(out string) (map[string]string, error) {
 func diffEnv(parent, full map[string]string) devEnv {
 	e := devEnv{Vars: map[string]string{}}
 	for k, v := range full {
-		if strings.EqualFold(k, "PATH") {
+		// The __VSCMD_PREINIT_ variables hold the environment VsDevCmd started
+		// from; replayed later they'd be stale.
+		if strings.EqualFold(k, "PATH") || strings.HasPrefix(strings.ToUpper(k), preinitPrefix) {
 			continue
 		}
 		if pv, ok := parent[k]; !ok || pv != v {

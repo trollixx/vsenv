@@ -201,6 +201,14 @@ func TestDevEnvPath_SwitchingArchPutsItsToolsFirst(t *testing.T) {
 	}
 }
 
+func TestDiffEnv_DropsPreinitVars(t *testing.T) {
+	full := map[string]string{"__VSCMD_PREINIT_PATH": `C:\a`, "__VSCMD_PREINIT_INCLUDE": `C:\inc`, "X": "1"}
+	diff := diffEnv(map[string]string{}, full)
+	if len(diff.Vars) != 1 || diff.Vars["X"] != "1" {
+		t.Errorf("expected only X in diff, got %v", diff.Vars)
+	}
+}
+
 func TestDevEnvPath_EmptyCurrent(t *testing.T) {
 	dev := devEnv{PathBefore: []string{`C:\vs`}, PathAfter: []string{`C:\cmake`}}
 	if got, want := dev.path(""), `C:\vs;C:\cmake`; got != want {
