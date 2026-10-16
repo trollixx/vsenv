@@ -34,7 +34,7 @@ func TestFormatEnv_Pwsh_AliasesPowerShell(t *testing.T) {
 
 func TestFormatEnv_Cmd(t *testing.T) {
 	out := formatTo(t, "cmd", map[string]string{"FOO": "bar baz"})
-	if out != "set FOO=bar baz\n" {
+	if out != "set \"FOO=bar baz\"\n" {
 		t.Errorf("unexpected cmd output: %q", out)
 	}
 }

@@ -22,7 +22,7 @@ func formatEnv(shell string, env map[string]string, w io.Writer) error {
 		}
 	case "cmd", "bat":
 		for _, k := range keys {
-			fmt.Fprintf(w, "set %s=%s\n", k, env[k])
+			fmt.Fprintf(w, "set \"%s=%s\"\n", k, env[k])
 		}
 	case "bash", "sh", "zsh":
 		for _, k := range keys {
