@@ -172,6 +172,13 @@ func TestDevEnvPath_MovesEntriesAlreadyPresent(t *testing.T) {
 	}
 }
 
+func TestDevEnvPath_MatchesUncleanEntries(t *testing.T) {
+	dev := devEnv{PathBefore: []string{`C:\Kits\bin\\x64`}}
+	if got, want := dev.path(`C:\Kits\bin\x64;C:\a`), `C:\Kits\bin\\x64;C:\a`; got != want {
+		t.Errorf("path() = %q, want %q", got, want)
+	}
+}
+
 func TestDevEnvPath_Idempotent(t *testing.T) {
 	dev := devEnv{PathBefore: []string{`C:\vs`, `C:\kits`}, PathAfter: []string{`C:\cmake`}}
 	once := dev.path(`C:\a;C:\b`)

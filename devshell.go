@@ -189,8 +189,11 @@ func pathEntrySet(path string) map[string]bool {
 	return set
 }
 
+// pathEntryKey normalizes a PATH entry for comparison. Cleaning matters for
+// entries like VsDevCmd's "bin\\x64", which come back as "bin\x64" after a
+// round trip through an MSYS2 shell's PATH.
 func pathEntryKey(p string) string {
-	return strings.ToLower(strings.TrimRight(p, `\/`))
+	return strings.ToLower(filepath.Clean(p))
 }
 
 func lookupFold(m map[string]string, key string) string {

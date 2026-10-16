@@ -61,9 +61,16 @@ func TestFormatEnv_Cmd(t *testing.T) {
 func TestFormatEnv_Bash(t *testing.T) {
 	out := formatTo(t, "bash", testDev(), `C:\a`)
 	want := "export FOO='bar'\n" +
-		"export Path='C:\\vs;C:\\a;C:\\cmake'\n"
+		"export PATH=\"$(cygpath -u -p 'C:\\vs;C:\\a;C:\\cmake' || echo \"$PATH\")\"\n"
 	if out != want {
 		t.Errorf("got:\n%q\nwant:\n%q", out, want)
+	}
+}
+
+func TestFormatEnv_Bash_LeavesAppliedPathAlone(t *testing.T) {
+	out := formatTo(t, "bash", testDev(), `C:\vs;C:\a;C:\cmake`)
+	if strings.Contains(out, "PATH") {
+		t.Errorf("expected no PATH changes, got:\n%s", out)
 	}
 }
 
@@ -75,7 +82,7 @@ func TestFormatEnv_Fish(t *testing.T) {
 	}
 	out := formatTo(t, "fish", dev, `C:\a`)
 	want := "set -gx VSINSTALLDIR 'C:\\\\VS\\\\'\n" +
-		"set -gx Path 'C:\\\\vs;C:\\\\a;C:\\\\cmake'\n"
+		"if set -l p (cygpath -u -p 'C:\\\\vs;C:\\\\a;C:\\\\cmake'); set -gx PATH (string split : -- $p); end\n"
 	if out != want {
 		t.Errorf("got:\n%q\nwant:\n%q", out, want)
 	}
