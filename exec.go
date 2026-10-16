@@ -115,40 +115,110 @@ func execChild(ctx context.Context, args []string, dev devEnv) error {
 	return nil
 }
 
-func spawnShell(ctx context.Context, shell string, dev devEnv) error {
-	autoDetected := shell == ""
-	if autoDetected {
-		shell = detectParentShell()
-	}
-	var cmd *exec.Cmd
-	switch strings.ToLower(shell) {
-	case shellIDPowerShell:
-		cmd = exec.CommandContext(ctx, "powershell.exe", "-NoLogo")
-	case shellIDPwsh:
-		cmd = exec.CommandContext(ctx, "pwsh.exe", "-NoLogo")
+// shellArgs returns the arguments vsenv starts an interactive shell with.
+func shellArgs(id string) ([]string, error) {
+	switch id {
+	case shellIDPowerShell, shellIDPwsh:
+		return []string{"-NoLogo"}, nil
 	case shellIDCmd:
-		cmd = exec.CommandContext(ctx, "cmd.exe", "/k", "prompt [vsenv] $P$G")
-	case shellIDNu, "nushell":
-		cmd = exec.CommandContext(ctx, "nu.exe")
-	case shellIDBash:
-		cmd = exec.CommandContext(ctx, "bash.exe")
-	default:
-		return fmt.Errorf("unknown shell %q", shell)
+		return []string{"/k", "prompt [vsenv] $P$G"}, nil
+	case shellIDNu, shellIDBash, shellIDFish:
+		return nil, nil
 	}
+	return nil, fmt.Errorf("unknown shell %q", id)
+}
+
+// resolveShell turns the --shell value into a shell ID and executable path.
+// Empty means the parent shell, relaunched from the same binary; a value with
+// a path separator is the shell's executable; anything else is a shell ID.
+func resolveShell(ctx context.Context, shell string, env []string) (string, string, error) {
+	var id, exe string
+	switch {
+	case shell == "":
+		id, exe = detectParentShell()
+	case strings.ContainsAny(shell, `\/`):
+		id, exe = shellIDFromExe(shell), shell
+		if id == "" {
+			return "", "", fmt.Errorf("can't tell which shell %q is", shell)
+		}
+	default:
+		id = strings.TrimSuffix(strings.ToLower(shell), ".exe")
+		if id == "nushell" {
+			id = shellIDNu
+		}
+	}
+	if strings.ContainsAny(exe, `\/`) {
+		return id, exe, nil
+	}
+	if _, err := shellArgs(id); err != nil {
+		return "", "", err
+	}
+	exe, err := findShellExe(ctx, id, envValue(env, "PATH"))
+	return id, exe, err
+}
+
+func findShellExe(ctx context.Context, id, pathEnv string) (string, error) {
+	if id == shellIDBash {
+		return findBash(ctx, pathEnv)
+	}
+	return lookInEnvPath(id+".exe", pathEnv, "")
+}
+
+// findBash locates a Windows-native bash (Git Bash, MSYS2, Cygwin). It skips
+// the WSL launchers in System32 and WindowsApps, which start Linux bash where
+// the VS environment is useless.
+func findBash(ctx context.Context, pathEnv string) (string, error) {
+	for _, dir := range splitPath(pathEnv) {
+		d := strings.ToLower(filepath.Clean(dir))
+		if strings.HasSuffix(d, `\system32`) || strings.HasSuffix(d, `\windowsapps`) {
+			continue
+		}
+		p := filepath.Join(dir, "bash.exe")
+		if info, err := os.Stat(p); err == nil && !info.IsDir() {
+			return p, nil
+		}
+	}
+	// Git for Windows often puts only git.exe on PATH; its bash sits under the
+	// install root, three levels above the exec path (mingw64/libexec/git-core).
+	if out, err := exec.CommandContext(ctx, "git", "--exec-path").Output(); err == nil {
+		root := filepath.Join(strings.TrimSpace(string(out)), "..", "..", "..")
+		for _, p := range []string{
+			filepath.Join(root, "bin", "bash.exe"),
+			filepath.Join(root, "usr", "bin", "bash.exe"),
+		} {
+			if _, statErr := os.Stat(p); statErr == nil {
+				return p, nil
+			}
+		}
+	}
+	return "", errors.New("no Windows bash found; install Git for Windows or pass --shell <path to bash.exe>")
+}
+
+func spawnShell(ctx context.Context, shell string, dev devEnv) error {
+	env := mergedEnv(dev)
+	id, exe, err := resolveShell(ctx, shell, env)
+	if err != nil {
+		return err
+	}
+	args, err := shellArgs(id)
+	if err != nil {
+		return err
+	}
+	cmd := exec.CommandContext(ctx, exe, args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	cmd.Env = mergedEnv(dev)
-	if autoDetected {
-		fmt.Fprintf(os.Stderr, "[vsenv] launching %s (auto-detected; override with --shell)\n", shell)
+	cmd.Env = env
+	if shell == "" {
+		fmt.Fprintf(os.Stderr, "[vsenv] launching %s (auto-detected; override with --shell)\n", id)
 	}
 	// Belt: ignore SIGINT at the Go level so Ctrl+Break (mapped to SIGINT by
 	// the Go runtime) doesn't terminate us, and to cover the microsecond
 	// window before SetConsoleCtrlHandler takes effect below.
 	signal.Ignore(os.Interrupt)
 	defer signal.Reset(os.Interrupt)
-	if err := cmd.Start(); err != nil {
-		return err
+	if startErr := cmd.Start(); startErr != nil {
+		return startErr
 	}
 	// Suspenders: after the child is spawned (so it doesn't inherit the
 	// disposition), tell Windows to suppress CTRL_C_EVENT delivery to us

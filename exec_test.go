@@ -69,6 +69,84 @@ func TestMergedEnv_WrapsCurrentPath(t *testing.T) {
 	}
 }
 
+func TestShellArgs(t *testing.T) {
+	for _, id := range []string{shellIDPowerShell, shellIDPwsh, shellIDCmd, shellIDNu, shellIDBash, shellIDFish} {
+		if _, err := shellArgs(id); err != nil {
+			t.Errorf("shellArgs(%q): %v", id, err)
+		}
+	}
+	if _, err := shellArgs("xonsh"); err == nil {
+		t.Error("expected error for unknown shell")
+	}
+}
+
+func TestResolveShell_ExplicitPath(t *testing.T) {
+	id, exe, err := resolveShell(t.Context(), `C:\msys64\usr\bin\fish.exe`, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id != shellIDFish || exe != `C:\msys64\usr\bin\fish.exe` {
+		t.Errorf("got id=%q exe=%q", id, exe)
+	}
+}
+
+func TestResolveShell_UnknownPath(t *testing.T) {
+	// git-bash.exe opens a new mintty window rather than running in this console.
+	for _, exe := range []string{`C:\tools\xonsh.exe`, `C:\Program Files\Git\git-bash.exe`} {
+		if _, _, err := resolveShell(t.Context(), exe, nil); err == nil {
+			t.Errorf("%s: expected error for unrecognized shell executable", exe)
+		}
+	}
+}
+
+func TestResolveShell_UnknownID(t *testing.T) {
+	if _, _, err := resolveShell(t.Context(), "xonsh", nil); err == nil {
+		t.Error("expected error for unknown shell")
+	}
+}
+
+func TestResolveShell_FindsOnPath(t *testing.T) {
+	dir := t.TempDir()
+	nu := filepath.Join(dir, "nu.exe")
+	if err := os.WriteFile(nu, []byte("MZ"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"nushell", "nu", "NU.EXE"} {
+		id, exe, err := resolveShell(t.Context(), name, []string{"PATH=" + dir})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if id != shellIDNu || exe != nu {
+			t.Errorf("%s: got id=%q exe=%q", name, id, exe)
+		}
+	}
+}
+
+func TestFindBash_SkipsWSLLaunchers(t *testing.T) {
+	root := t.TempDir()
+	var dirs []string
+	for _, d := range []string{"System32", "WindowsApps", "Git"} {
+		dir := filepath.Join(root, d)
+		if err := os.Mkdir(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "bash.exe"), []byte("MZ"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		dirs = append(dirs, dir)
+	}
+	// Spelled the unusual ways PATH allows.
+	dirs[0] = strings.ReplaceAll(dirs[0], `\`, "/")
+	dirs[1] += `\.`
+	got, err := findBash(t.Context(), strings.Join(dirs, ";"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(root, "Git", "bash.exe"); got != want {
+		t.Errorf("findBash = %q, want %q", got, want)
+	}
+}
+
 func TestLookInEnvPath_AbsolutePath_PassesThrough(t *testing.T) {
 	got, err := lookInEnvPath(`C:\foo\bar.exe`, "", ".EXE")
 	if err != nil {

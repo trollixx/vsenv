@@ -144,7 +144,7 @@ func shellCmd() *cli.Command {
 		Flags: append(archFlags(),
 			&cli.StringFlag{
 				Name:  shellFlagName,
-				Usage: "shell to launch (cmd|powershell|pwsh|nu|bash); auto-detect if empty",
+				Usage: "shell to launch (cmd|powershell|pwsh|nu|bash|fish) or a path to its executable; auto-detect if empty",
 			},
 		),
 		Action: func(ctx context.Context, c *cli.Command) error {

@@ -1,28 +1,47 @@
 package main
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 )
 
-func TestParentExeName(t *testing.T) {
-	name, err := parentExeName()
+func TestParentExePath(t *testing.T) {
+	path, err := parentExePath()
 	if err != nil {
-		t.Fatalf("parentExeName: %v", err)
+		t.Fatalf("parentExePath: %v", err)
 	}
-	if name == "" {
-		t.Fatal("parentExeName returned empty string")
+	if !filepath.IsAbs(path) {
+		t.Errorf("expected an absolute path, got %q", path)
 	}
-	if !strings.HasSuffix(strings.ToLower(name), ".exe") {
-		t.Errorf("expected .exe suffix, got %q", name)
+	if !strings.HasSuffix(strings.ToLower(path), ".exe") {
+		t.Errorf("expected .exe suffix, got %q", path)
 	}
-	t.Logf("parent exe: %s", name)
+	t.Logf("parent exe: %s", path)
 }
 
 func TestDetectParentShell(t *testing.T) {
-	shell := detectParentShell()
-	if shell == "" {
-		t.Fatal("detectParentShell returned empty string")
+	id, exe := detectParentShell()
+	if id == "" {
+		t.Fatal("detectParentShell returned empty ID")
 	}
-	t.Logf("detected parent shell: %s", shell)
+	t.Logf("detected parent shell: %s (%s)", id, exe)
+}
+
+func TestShellIDFromExe(t *testing.T) {
+	cases := map[string]string{
+		"nu.exe":                                 shellIDNu,
+		`C:\Program Files\PowerShell\7\pwsh.exe`: shellIDPwsh,
+		"PowerShell.exe":                         shellIDPowerShell,
+		"cmd.exe":                                shellIDCmd,
+		`C:\Program Files\Git\usr\bin\bash.exe`:  shellIDBash,
+		"sh.exe":                                 shellIDBash,
+		`C:\msys64\usr\bin\fish.exe`:             shellIDFish,
+		"go.exe":                                 "",
+	}
+	for in, want := range cases {
+		if got := shellIDFromExe(in); got != want {
+			t.Errorf("shellIDFromExe(%q) = %q, want %q", in, got, want)
+		}
+	}
 }
