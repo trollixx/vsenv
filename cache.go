@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 const cacheSchemaVersion = 2
@@ -20,7 +21,9 @@ type envCache struct {
 	Arch                string `json:"arch"`
 	HostArch            string `json:"hostArch"`
 	DevCmdArgs          string `json:"devCmdArgs"`
-	Env                 devEnv `json:"env"`
+	// StateTime is instanceStateTime of the instance before the capture.
+	StateTime time.Time `json:"stateTime"`
+	Env       devEnv    `json:"env"`
 }
 
 func cacheDir() (string, error) {
@@ -56,9 +59,12 @@ func GetEnv(ctx context.Context, install *Install, arch, hostArch, devArgs strin
 		return devEnv{}, err
 	}
 
+	// Taken before the capture, so a change the VS Installer makes during it
+	// still invalidates the result.
+	stateTime := instanceStateTime(install.InstanceID)
 	if data, readErr := os.ReadFile(cachePath); readErr == nil {
 		var c envCache
-		if json.Unmarshal(data, &c) == nil && c.Schema == cacheSchemaVersion {
+		if json.Unmarshal(data, &c) == nil && c.Schema == cacheSchemaVersion && c.StateTime.Equal(stateTime) {
 			return c.Env, nil
 		}
 	}
@@ -77,6 +83,7 @@ func GetEnv(ctx context.Context, install *Install, arch, hostArch, devArgs strin
 		Arch:                arch,
 		HostArch:            hostArch,
 		DevCmdArgs:          devArgs,
+		StateTime:           stateTime,
 		Env:                 diff,
 	}
 	if data, marshalErr := json.MarshalIndent(c, "", "  "); marshalErr == nil {

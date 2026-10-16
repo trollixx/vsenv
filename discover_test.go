@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func sample() []Install {
@@ -22,7 +23,7 @@ func seedInstalls(t *testing.T, installs []Install) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c := installsCache{Schema: cacheSchemaVersion, Installs: installs}
+	c := installsCache{Schema: cacheSchemaVersion, Installer: currentInstallerState(), Installs: installs}
 	if writeErr := writeInstallsCache(path, c); writeErr != nil {
 		t.Fatal(writeErr)
 	}
@@ -128,8 +129,9 @@ func TestInstallsCache_Roundtrip(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "installs.json")
 	original := installsCache{
-		Schema:   cacheSchemaVersion,
-		Installs: sample(),
+		Schema:    cacheSchemaVersion,
+		Installer: installerState{Vswhere: time.Unix(1, 0), Instances: time.Unix(2, 0)},
+		Installs:  sample(),
 	}
 	if err := writeInstallsCache(path, original); err != nil {
 		t.Fatal(err)
@@ -137,6 +139,9 @@ func TestInstallsCache_Roundtrip(t *testing.T) {
 	got, ok := readInstallsCache(path)
 	if !ok {
 		t.Fatal("readInstallsCache reported failure")
+	}
+	if !got.Installer.equal(original.Installer) {
+		t.Errorf("installer state mismatch: %+v vs %+v", got.Installer, original.Installer)
 	}
 	if len(got.Installs) != len(original.Installs) {
 		t.Fatalf("len mismatch: got %d, want %d", len(got.Installs), len(original.Installs))
@@ -174,6 +179,59 @@ func TestReadInstallsCache_OldFormat(t *testing.T) {
 	}
 	if _, ok := readInstallsCache(path); ok {
 		t.Error("expected ok=false for the old cache format")
+	}
+}
+
+func TestInstallerState_ChangesWithInstances(t *testing.T) {
+	t.Setenv("ProgramData", t.TempDir())
+	before := currentInstallerState()
+	writeInstanceState(t, "abc", time.Now().Add(-time.Hour))
+	after := currentInstallerState()
+	if before.equal(after) {
+		t.Error("installer state should change when an instance does")
+	}
+	if !after.equal(currentInstallerState()) {
+		t.Error("installer state should be stable while nothing changes")
+	}
+}
+
+// writeInstanceState creates a fake VS Installer state.json for instanceID
+// under a temporary %ProgramData%, modified at mtime.
+func writeInstanceState(t *testing.T, instanceID string, mtime time.Time) {
+	t.Helper()
+	dir := filepath.Join(os.Getenv("ProgramData"), "Microsoft", "VisualStudio", "Packages", "_Instances", instanceID)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	state := filepath.Join(dir, "state.json")
+	if err := writeFile(state, "{}"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(state, mtime, mtime); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestInstanceStateTime(t *testing.T) {
+	t.Setenv("ProgramData", t.TempDir())
+	future := time.Now().Add(time.Hour).Truncate(time.Second)
+	writeInstanceState(t, "abc", future)
+
+	if got := instanceStateTime("abc"); !got.Equal(future) {
+		t.Errorf("instanceStateTime(abc) = %v, want %v", got, future)
+	}
+	if got := instanceStateTime("*"); !got.Equal(future) {
+		t.Errorf("instanceStateTime(*) = %v, want %v", got, future)
+	}
+	if got := instanceStateTime("missing"); !got.IsZero() {
+		t.Errorf("instanceStateTime(missing) = %v, want zero", got)
+	}
+}
+
+func TestInstanceStateTime_NoProgramData(t *testing.T) {
+	t.Setenv("ProgramData", "")
+	if got := instanceStateTime("*"); !got.IsZero() {
+		t.Errorf("expected zero time, got %v", got)
 	}
 }
 

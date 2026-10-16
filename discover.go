@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"time"
 )
 
 const vswhereDefault = `C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe`
@@ -24,8 +25,30 @@ type Install struct {
 }
 
 type installsCache struct {
-	Schema   int       `json:"schema"`
-	Installs []Install `json:"installs"`
+	Schema int `json:"schema"`
+	// Installer is the installer's state before vswhere ran.
+	Installer installerState `json:"installer"`
+	Installs  []Install      `json:"installs"`
+}
+
+// installerState identifies the state of the VS Installer: when vswhere.exe
+// was updated and when any instance last changed.
+type installerState struct {
+	Vswhere   time.Time `json:"vswhere"`
+	Instances time.Time `json:"instances"`
+}
+
+func currentInstallerState() installerState {
+	var s installerState
+	if info, err := os.Stat(vswhereDefault); err == nil {
+		s.Vswhere = info.ModTime()
+	}
+	s.Instances = instanceStateTime("*")
+	return s
+}
+
+func (s installerState) equal(o installerState) bool {
+	return s.Vswhere.Equal(o.Vswhere) && s.Instances.Equal(o.Instances)
 }
 
 func DiscoverInstalls(ctx context.Context, force bool) ([]Install, error) {
@@ -34,8 +57,9 @@ func DiscoverInstalls(ctx context.Context, force bool) ([]Install, error) {
 		return nil, err
 	}
 
+	state := currentInstallerState()
 	if !force {
-		if c, ok := readInstallsCache(cachePath); ok && installsCacheFresh(cachePath) {
+		if c, ok := readInstallsCache(cachePath); ok && c.Installer.equal(state) {
 			return c.Installs, nil
 		}
 	}
@@ -44,7 +68,7 @@ func DiscoverInstalls(ctx context.Context, force bool) ([]Install, error) {
 	if err != nil {
 		return nil, err
 	}
-	_ = writeInstallsCache(cachePath, installsCache{Schema: cacheSchemaVersion, Installs: installs})
+	_ = writeInstallsCache(cachePath, installsCache{Schema: cacheSchemaVersion, Installer: state, Installs: installs})
 	return installs, nil
 }
 
@@ -137,17 +161,30 @@ func writeInstallsCache(path string, c installsCache) error {
 }
 
 func writeInstallsCacheRaw(path string, data []byte) error {
+	//nolint:gosec // G703: path is under %LOCALAPPDATA%, the user's own dir by design
 	return os.WriteFile(path, data, 0o600)
 }
 
-func installsCacheFresh(path string) bool {
-	cs, err := os.Stat(path)
-	if err != nil {
-		return false
+// instanceStateTime returns when the VS Installer last installed, updated,
+// modified or removed the instance with the given ID ("*" for any), or the
+// zero time if that can't be determined.
+func instanceStateTime(instanceID string) time.Time {
+	programData := os.Getenv("ProgramData")
+	if programData == "" {
+		return time.Time{}
 	}
-	vs, err := os.Stat(vswhereDefault)
-	if err != nil {
-		return false
+	// vswhere reads the same per-instance state the installer keeps here.
+	dir := filepath.Join(programData, "Microsoft", "VisualStudio", "Packages", "_Instances")
+	var latest time.Time
+	paths, _ := filepath.Glob(filepath.Join(dir, instanceID, "state.json"))
+	if instanceID == "*" {
+		paths = append(paths, dir) // catches removed instances
 	}
-	return !vs.ModTime().After(cs.ModTime())
+	for _, p := range paths {
+		//nolint:gosec // G703: read-only stat under %ProgramData%, where the VS Installer keeps state
+		if info, err := os.Stat(p); err == nil && info.ModTime().After(latest) {
+			latest = info.ModTime()
+		}
+	}
+	return latest
 }

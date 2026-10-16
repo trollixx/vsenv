@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"testing"
+	"time"
 )
 
 func TestEnvCachePath_DeterministicForSameInput(t *testing.T) {
@@ -67,6 +68,7 @@ func TestEnvCachePath_DiffersByDevCmdArgs(t *testing.T) {
 
 func TestGetEnv_CacheHit_SkipsDevCmd(t *testing.T) {
 	t.Setenv("LOCALAPPDATA", t.TempDir())
+	t.Setenv("ProgramData", t.TempDir())
 	install := &Install{InstanceID: "x", InstallationVersion: "1.0"}
 
 	path, err := envCachePath(install, "x64", "x64", "")
@@ -114,6 +116,61 @@ func TestGetEnv_StaleSchema_ForcesRebuild(t *testing.T) {
 	got, err := GetEnv(context.Background(), install, "x64", "x64", "")
 	if err == nil && got.Vars["FOO"] == "stale" {
 		t.Error("stale-schema cache should have been rejected")
+	}
+}
+
+func TestGetEnv_InstanceModified_ForcesRebuild(t *testing.T) {
+	t.Setenv("LOCALAPPDATA", t.TempDir())
+	t.Setenv("ProgramData", t.TempDir())
+	install := &Install{InstanceID: "x", InstallationVersion: "1.0"}
+
+	path, err := envCachePath(install, "x64", "x64", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cached := envCache{Schema: cacheSchemaVersion, Env: devEnv{Vars: map[string]string{"FOO": "old"}}}
+	data, _ := json.Marshal(cached)
+	if writeErr := os.WriteFile(path, data, 0o600); writeErr != nil {
+		t.Fatal(writeErr)
+	}
+	// The VS Installer touched the instance after the cache was written.
+	writeInstanceState(t, "x", time.Now().Add(time.Hour))
+
+	// As with a stale schema, the rebuild fails on the fake install path; what
+	// matters is that the cached value wasn't returned.
+	got, err := GetEnv(context.Background(), install, "x64", "x64", "")
+	if err == nil && got.Vars["FOO"] == "old" {
+		t.Error("cache older than the instance's state should have been rejected")
+	}
+}
+
+func TestGetEnv_FutureInstanceState_StillHits(t *testing.T) {
+	t.Setenv("LOCALAPPDATA", t.TempDir())
+	t.Setenv("ProgramData", t.TempDir())
+	install := &Install{InstanceID: "x", InstallationVersion: "1.0"}
+
+	// A state.json dated ahead of the clock mustn't make every run rebuild.
+	writeInstanceState(t, "x", time.Now().Add(time.Hour))
+	path, err := envCachePath(install, "x64", "x64", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cached := envCache{
+		Schema:    cacheSchemaVersion,
+		StateTime: instanceStateTime("x"),
+		Env:       devEnv{Vars: map[string]string{"FOO": "cached"}},
+	}
+	data, _ := json.Marshal(cached)
+	if writeErr := os.WriteFile(path, data, 0o600); writeErr != nil {
+		t.Fatal(writeErr)
+	}
+
+	got, err := GetEnv(context.Background(), install, "x64", "x64", "")
+	if err != nil {
+		t.Fatalf("GetEnv: %v", err)
+	}
+	if got.Vars["FOO"] != "cached" {
+		t.Errorf("expected the cached env, got %v", got)
 	}
 }
 
