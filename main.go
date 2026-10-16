@@ -65,7 +65,7 @@ func archFlags() []cli.Flag {
 		},
 		&cli.StringFlag{
 			Name:  "instance",
-			Usage: "VS instance ID (default: latest discovered install)",
+			Usage: "VS instance ID (default: newest install with MSVC)",
 		},
 		&cli.StringFlag{
 			Name:  "dev-cmd-args",
@@ -88,12 +88,15 @@ func listCmd() *cli.Command {
 				return nil
 			}
 			for _, i := range installs {
-				prerelease := ""
+				notes := ""
 				if i.IsPrerelease {
-					prerelease = " (prerelease)"
+					notes += " (prerelease)"
+				}
+				if !i.IsComplete {
+					notes += " (incomplete)"
 				}
 				fmt.Fprintf(os.Stdout, "%s  %s  %s%s\n  %s\n",
-					i.InstanceID, i.InstallationVersion, i.DisplayName, prerelease, i.InstallationPath)
+					i.InstanceID, i.InstallationVersion, i.DisplayName, notes, i.InstallationPath)
 			}
 			return nil
 		},
