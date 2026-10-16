@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -77,25 +78,25 @@ func TestDiffEnv_Adds(t *testing.T) {
 	parent := map[string]string{"A": "1"}
 	full := map[string]string{"A": "1", "B": "2"}
 	diff := diffEnv(parent, full)
-	if len(diff) != 1 || diff["B"] != "2" {
-		t.Errorf("expected only B=2 in diff, got %v", diff)
+	if len(diff.Vars) != 1 || diff.Vars["B"] != "2" {
+		t.Errorf("expected only B=2 in diff, got %v", diff.Vars)
 	}
 }
 
 func TestDiffEnv_Overrides(t *testing.T) {
-	parent := map[string]string{"PATH": "old"}
-	full := map[string]string{"PATH": "new"}
+	parent := map[string]string{"FOO": "old"}
+	full := map[string]string{"FOO": "new"}
 	diff := diffEnv(parent, full)
-	if diff["PATH"] != "new" {
-		t.Errorf("expected PATH=new in diff, got %v", diff)
+	if diff.Vars["FOO"] != "new" {
+		t.Errorf("expected FOO=new in diff, got %v", diff.Vars)
 	}
 }
 
 func TestDiffEnv_Identical(t *testing.T) {
-	m := map[string]string{"A": "1", "B": "2"}
+	m := map[string]string{"A": "1", "Path": `C:\a`}
 	diff := diffEnv(m, m)
-	if len(diff) != 0 {
-		t.Errorf("expected empty diff, got %v", diff)
+	if len(diff.Vars) != 0 || len(diff.PathBefore) != 0 || len(diff.PathAfter) != 0 {
+		t.Errorf("expected empty diff, got %+v", diff)
 	}
 }
 
@@ -103,8 +104,100 @@ func TestDiffEnv_DoesNotCarryRemovedKeys(t *testing.T) {
 	parent := map[string]string{"A": "1", "B": "2"}
 	full := map[string]string{"A": "1"}
 	diff := diffEnv(parent, full)
-	if len(diff) != 0 {
-		t.Errorf("removed keys should not appear in diff, got %v", diff)
+	if len(diff.Vars) != 0 {
+		t.Errorf("removed keys should not appear in diff, got %v", diff.Vars)
+	}
+}
+
+func TestDiffEnv_SplitsPathAroundOriginal(t *testing.T) {
+	base := map[string]string{"Path": `C:\a;C:\b;`}
+	full := map[string]string{"PATH": `C:\vs1;C:\vs2;C:\a;C:\b;;C:\cmake`}
+	diff := diffEnv(base, full)
+	if _, ok := diff.Vars["PATH"]; ok {
+		t.Error("PATH should not be stored as a plain var")
+	}
+	if !slices.Equal(diff.PathBefore, []string{`C:\vs1`, `C:\vs2`}) {
+		t.Errorf("PathBefore = %q", diff.PathBefore)
+	}
+	if !slices.Equal(diff.PathAfter, []string{`C:\cmake`}) {
+		t.Errorf("PathAfter = %q", diff.PathAfter)
+	}
+}
+
+func TestDiffEnv_KeepsAddedEntriesAlsoInOriginal(t *testing.T) {
+	base := map[string]string{"Path": `C:\a;C:\vs`}
+	full := map[string]string{"Path": `C:\vs;C:\a;C:\vs;C:\cmake`}
+	diff := diffEnv(base, full)
+	if !slices.Equal(diff.PathBefore, []string{`C:\vs`}) || !slices.Equal(diff.PathAfter, []string{`C:\cmake`}) {
+		t.Errorf("got before=%q after=%q", diff.PathBefore, diff.PathAfter)
+	}
+}
+
+func TestDiffEnv_MatchesOriginalPathAtEntryBoundaries(t *testing.T) {
+	base := map[string]string{"Path": `C:\a`}
+	full := map[string]string{"Path": `C:\ab;C:\a;C:\c`}
+	diff := diffEnv(base, full)
+	if !slices.Equal(diff.PathBefore, []string{`C:\ab`}) || !slices.Equal(diff.PathAfter, []string{`C:\c`}) {
+		t.Errorf("got before=%q after=%q", diff.PathBefore, diff.PathAfter)
+	}
+}
+
+func TestDiffEnv_OriginalPathNotIntact_NewEntriesPrepended(t *testing.T) {
+	base := map[string]string{"Path": `C:\a;C:\b`}
+	full := map[string]string{"Path": `C:\vs;C:\b;C:\a;C:\cmake`}
+	diff := diffEnv(base, full)
+	if !slices.Equal(diff.PathBefore, []string{`C:\vs`, `C:\cmake`}) || len(diff.PathAfter) != 0 {
+		t.Errorf("got before=%q after=%q", diff.PathBefore, diff.PathAfter)
+	}
+}
+
+func TestDiffEnv_NoOriginalPath_AllPrepended(t *testing.T) {
+	diff := diffEnv(map[string]string{}, map[string]string{"Path": `C:\vs1;C:\vs2`})
+	if !slices.Equal(diff.PathBefore, []string{`C:\vs1`, `C:\vs2`}) || len(diff.PathAfter) != 0 {
+		t.Errorf("got before=%q after=%q", diff.PathBefore, diff.PathAfter)
+	}
+}
+
+func TestDevEnvPath_WrapsCurrent(t *testing.T) {
+	dev := devEnv{PathBefore: []string{`C:\vs`}, PathAfter: []string{`C:\cmake`}}
+	if got, want := dev.path(`C:\a;C:\b`), `C:\vs;C:\a;C:\b;C:\cmake`; got != want {
+		t.Errorf("path() = %q, want %q", got, want)
+	}
+}
+
+func TestDevEnvPath_MovesEntriesAlreadyPresent(t *testing.T) {
+	dev := devEnv{PathBefore: []string{`C:\VS\bin`}, PathAfter: []string{`C:\cmake`}}
+	if got, want := dev.path(`C:\a;c:\vs\bin\;C:\cmake;C:\b`), `C:\VS\bin;C:\a;C:\b;C:\cmake`; got != want {
+		t.Errorf("path() = %q, want %q", got, want)
+	}
+}
+
+func TestDevEnvPath_Idempotent(t *testing.T) {
+	dev := devEnv{PathBefore: []string{`C:\vs`, `C:\kits`}, PathAfter: []string{`C:\cmake`}}
+	once := dev.path(`C:\a;C:\b`)
+	if twice := dev.path(once); twice != once {
+		t.Errorf("applying twice changed PATH:\n%q\n%q", once, twice)
+	}
+}
+
+func TestDevEnvPath_SwitchingArchPutsItsToolsFirst(t *testing.T) {
+	x64 := devEnv{PathBefore: []string{`C:\msvc\Hostx64\x64`, `C:\kits`}}
+	x86 := devEnv{PathBefore: []string{`C:\msvc\Hostx64\x86`, `C:\msvc\Hostx64\x64`, `C:\kits`}}
+	p := x64.path(`C:\a`)
+	p = x86.path(p)
+	if !strings.HasPrefix(p, `C:\msvc\Hostx64\x86;`) {
+		t.Errorf("after x86: %q", p)
+	}
+	p = x64.path(p)
+	if want := `C:\msvc\Hostx64\x64;C:\kits;C:\msvc\Hostx64\x86;C:\a`; p != want {
+		t.Errorf("after x64 again: %q, want %q", p, want)
+	}
+}
+
+func TestDevEnvPath_EmptyCurrent(t *testing.T) {
+	dev := devEnv{PathBefore: []string{`C:\vs`}, PathAfter: []string{`C:\cmake`}}
+	if got, want := dev.path(""), `C:\vs;C:\cmake`; got != want {
+		t.Errorf("path() = %q, want %q", got, want)
 	}
 }
 

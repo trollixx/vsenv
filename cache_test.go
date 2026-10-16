@@ -79,7 +79,7 @@ func TestGetEnv_CacheHit_SkipsDevCmd(t *testing.T) {
 		InstallationVersion: install.InstallationVersion,
 		Arch:                "x64",
 		HostArch:            "x64",
-		Env:                 map[string]string{"FOO": "bar", "PATH": `C:\fake`},
+		Env:                 devEnv{Vars: map[string]string{"FOO": "bar"}, PathBefore: []string{`C:\fake`}},
 	}
 	data, _ := json.MarshalIndent(preseeded, "", "  ")
 	if writeErr := os.WriteFile(path, data, 0o600); writeErr != nil {
@@ -90,7 +90,7 @@ func TestGetEnv_CacheHit_SkipsDevCmd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetEnv: %v", err)
 	}
-	if got["FOO"] != "bar" || got["PATH"] != `C:\fake` {
+	if got.Vars["FOO"] != "bar" || len(got.PathBefore) != 1 || got.PathBefore[0] != `C:\fake` {
 		t.Errorf("expected cache-hit env, got %v", got)
 	}
 }
@@ -103,7 +103,7 @@ func TestGetEnv_StaleSchema_ForcesRebuild(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stale := map[string]any{"schema": 999, "env": map[string]string{"FOO": "stale"}}
+	stale := map[string]any{"schema": 999, "env": map[string]any{"vars": map[string]string{"FOO": "stale"}}}
 	data, _ := json.Marshal(stale)
 	if writeErr := os.WriteFile(path, data, 0o600); writeErr != nil {
 		t.Fatal(writeErr)
@@ -112,7 +112,7 @@ func TestGetEnv_StaleSchema_ForcesRebuild(t *testing.T) {
 	// GetEnv should not return the stale FOO; it'll try to spawn cmd.exe and fail
 	// because the install path is fake. We just verify it didn't blindly use the cache.
 	got, err := GetEnv(context.Background(), install, "x64", "x64", "")
-	if err == nil && got["FOO"] == "stale" {
+	if err == nil && got.Vars["FOO"] == "stale" {
 		t.Error("stale-schema cache should have been rejected")
 	}
 }

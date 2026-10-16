@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -145,8 +146,13 @@ func TestIntegration_GetEnv_FullPipeline(t *testing.T) {
 	}
 	coldDur := time.Since(cold)
 
-	if v := env1["VSINSTALLDIR"]; !strings.Contains(strings.ToLower(v), "visual studio") {
+	if v := env1.Vars["VSINSTALLDIR"]; !strings.Contains(strings.ToLower(v), "visual studio") {
 		t.Errorf("VSINSTALLDIR doesn't look right: %q", v)
+	}
+	if !slices.ContainsFunc(env1.PathBefore, func(p string) bool {
+		return strings.Contains(strings.ToLower(p), `\vc\tools\msvc\`)
+	}) {
+		t.Errorf("PathBefore lacks the MSVC bin dir: %q", env1.PathBefore)
 	}
 
 	// Warm call: cache hit, must be fast
@@ -160,17 +166,20 @@ func TestIntegration_GetEnv_FullPipeline(t *testing.T) {
 	if warmDur > 500*time.Millisecond {
 		t.Errorf("warm cache took %v (>500ms); cold took %v", warmDur, coldDur)
 	}
-	if len(env1) != len(env2) {
-		t.Errorf("cold/warm env size mismatch: %d vs %d", len(env1), len(env2))
+	if len(env1.Vars) != len(env2.Vars) {
+		t.Errorf("cold/warm env size mismatch: %d vs %d", len(env1.Vars), len(env2.Vars))
 	}
-	for k, v := range env1 {
-		if env2[k] != v {
-			t.Errorf("warm cache differs for %s: %q vs %q", k, env2[k], v)
+	for k, v := range env1.Vars {
+		if env2.Vars[k] != v {
+			t.Errorf("warm cache differs for %s: %q vs %q", k, env2.Vars[k], v)
 			break
 		}
 	}
+	if !slices.Equal(env1.PathBefore, env2.PathBefore) || !slices.Equal(env1.PathAfter, env2.PathAfter) {
+		t.Error("warm cache PATH entries differ from cold")
+	}
 
-	t.Logf("cold: %v, warm: %v, env vars: %d", coldDur, warmDur, len(env1))
+	t.Logf("cold: %v, warm: %v, env vars: %d", coldDur, warmDur, len(env1.Vars))
 }
 
 func TestIntegration_GetEnv_DifferentArchsCacheSeparately(t *testing.T) {
@@ -194,16 +203,16 @@ func TestIntegration_GetEnv_DifferentArchsCacheSeparately(t *testing.T) {
 		t.Fatalf("x86 capture: %v", err)
 	}
 
-	if envX64["VSCMD_ARG_TGT_ARCH"] != "x64" {
-		t.Errorf("x64 cache has wrong target arch: %q", envX64["VSCMD_ARG_TGT_ARCH"])
+	if envX64.Vars["VSCMD_ARG_TGT_ARCH"] != "x64" {
+		t.Errorf("x64 cache has wrong target arch: %q", envX64.Vars["VSCMD_ARG_TGT_ARCH"])
 	}
-	if envX86["VSCMD_ARG_TGT_ARCH"] != "x86" {
-		t.Errorf("x86 cache has wrong target arch: %q", envX86["VSCMD_ARG_TGT_ARCH"])
+	if envX86.Vars["VSCMD_ARG_TGT_ARCH"] != "x86" {
+		t.Errorf("x86 cache has wrong target arch: %q", envX86.Vars["VSCMD_ARG_TGT_ARCH"])
 	}
 
 	// LIB paths should differ between archs
-	if envX64["LIB"] == envX86["LIB"] {
-		t.Errorf("LIB should differ between x64 and x86, both = %q", envX64["LIB"])
+	if envX64.Vars["LIB"] == envX86.Vars["LIB"] {
+		t.Errorf("LIB should differ between x64 and x86, both = %q", envX64.Vars["LIB"])
 	}
 }
 

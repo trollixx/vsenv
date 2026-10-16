@@ -4,36 +4,47 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"sort"
+	"maps"
+	"slices"
 	"strings"
 )
 
-func formatEnv(shell string, env map[string]string, w io.Writer) error {
-	keys := make([]string, 0, len(env))
-	for k := range env {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
+// formatEnv writes dev as commands for shell. curPath is the caller's PATH,
+// which the output replaces with dev.path(curPath), so sourcing it twice (or
+// in a nested shell) doesn't duplicate entries.
+func formatEnv(shell string, dev devEnv, curPath string, w io.Writer) error {
+	keys := slices.Sorted(maps.Keys(dev.Vars))
+	path := dev.path(curPath)
+	setPath := path != curPath
 
 	switch strings.ToLower(shell) {
 	case "powershell", "pwsh":
 		for _, k := range keys {
-			fmt.Fprintf(w, "$env:%s = %s\n", k, psQuote(env[k]))
+			fmt.Fprintf(w, "$env:%s = %s\n", k, psQuote(dev.Vars[k]))
+		}
+		if setPath {
+			fmt.Fprintf(w, "$env:Path = %s\n", psQuote(path))
 		}
 	case "cmd", "bat":
 		for _, k := range keys {
-			fmt.Fprintf(w, "set \"%s=%s\"\n", k, env[k])
+			fmt.Fprintf(w, "set \"%s=%s\"\n", k, dev.Vars[k])
 		}
+		fmt.Fprintf(w, "set \"Path=%s\"\n", path)
 	case "bash", "sh", "zsh":
 		for _, k := range keys {
-			fmt.Fprintf(w, "export %s=%s\n", k, shQuote(env[k]))
+			fmt.Fprintf(w, "export %s=%s\n", k, shQuote(dev.Vars[k]))
 		}
+		fmt.Fprintf(w, "export Path=%s\n", shQuote(path))
 	case "fish":
 		for _, k := range keys {
-			fmt.Fprintf(w, "set -gx %s %s\n", k, fishQuote(env[k]))
+			fmt.Fprintf(w, "set -gx %s %s\n", k, fishQuote(dev.Vars[k]))
 		}
+		fmt.Fprintf(w, "set -gx Path %s\n", fishQuote(path))
 	case "nu", "nushell":
-		return json.NewEncoder(w).Encode(env)
+		vars := make(map[string]string, len(dev.Vars)+1)
+		maps.Copy(vars, dev.Vars)
+		vars["Path"] = path
+		return json.NewEncoder(w).Encode(vars)
 	default:
 		return fmt.Errorf("unknown shell %q (supported: powershell, pwsh, cmd, bash, fish, nu)", shell)
 	}

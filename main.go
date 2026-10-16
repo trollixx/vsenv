@@ -173,15 +173,15 @@ func envCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
-			return formatEnv(c.String(shellFlagName), env, os.Stdout)
+			return formatEnv(c.String(shellFlagName), env, os.Getenv("PATH"), os.Stdout)
 		},
 	}
 }
 
-func loadEnv(ctx context.Context, c *cli.Command) (map[string]string, error) {
+func loadEnv(ctx context.Context, c *cli.Command) (devEnv, error) {
 	install, err := SelectInstall(ctx, c.String("instance"))
 	if err != nil {
-		return nil, err
+		return devEnv{}, err
 	}
 	return GetEnv(ctx, install, c.String("arch"), c.String("host-arch"), c.String("dev-cmd-args"))
 }

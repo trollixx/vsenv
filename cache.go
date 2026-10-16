@@ -6,20 +6,21 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 )
 
-const cacheSchemaVersion = 1
+const cacheSchemaVersion = 2
 
 type envCache struct {
-	Schema              int               `json:"schema"`
-	InstanceID          string            `json:"instanceId"`
-	InstallationVersion string            `json:"installationVersion"`
-	Arch                string            `json:"arch"`
-	HostArch            string            `json:"hostArch"`
-	DevCmdArgs          string            `json:"devCmdArgs"`
-	Env                 map[string]string `json:"env"`
+	Schema              int    `json:"schema"`
+	InstanceID          string `json:"instanceId"`
+	InstallationVersion string `json:"installationVersion"`
+	Arch                string `json:"arch"`
+	HostArch            string `json:"hostArch"`
+	DevCmdArgs          string `json:"devCmdArgs"`
+	Env                 devEnv `json:"env"`
 }
 
 func cacheDir() (string, error) {
@@ -41,15 +42,18 @@ func envCachePath(install *Install, arch, hostArch, devArgs string) (string, err
 	if err != nil {
 		return "", err
 	}
-	key := install.InstanceID + "|" + install.InstallationVersion + "|" + arch + "|" + hostArch + "|" + devArgs
+	// The schema is part of the key so vsenv versions with different cache
+	// formats don't keep replacing each other's files.
+	key := fmt.Sprintf("%d|%s|%s|%s|%s|%s",
+		cacheSchemaVersion, install.InstanceID, install.InstallationVersion, arch, hostArch, devArgs)
 	h := sha256.Sum256([]byte(key))
 	return filepath.Join(dir, "env", hex.EncodeToString(h[:])+".json"), nil
 }
 
-func GetEnv(ctx context.Context, install *Install, arch, hostArch, devArgs string) (map[string]string, error) {
+func GetEnv(ctx context.Context, install *Install, arch, hostArch, devArgs string) (devEnv, error) {
 	cachePath, err := envCachePath(install, arch, hostArch, devArgs)
 	if err != nil {
-		return nil, err
+		return devEnv{}, err
 	}
 
 	if data, readErr := os.ReadFile(cachePath); readErr == nil {
@@ -62,7 +66,7 @@ func GetEnv(ctx context.Context, install *Install, arch, hostArch, devArgs strin
 	parent := parentEnvMap()
 	full, err := captureDevShellEnv(ctx, install, arch, hostArch, devArgs)
 	if err != nil {
-		return nil, err
+		return devEnv{}, err
 	}
 	diff := diffEnv(parent, full)
 

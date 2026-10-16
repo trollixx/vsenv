@@ -22,7 +22,7 @@ func TestEnvValue_CaseInsensitive(t *testing.T) {
 
 func TestMergedEnv_OverridesParent(t *testing.T) {
 	t.Setenv("VSENV_TEST_KEY_OVERRIDE", "parent")
-	merged := mergedEnv(map[string]string{"VSENV_TEST_KEY_OVERRIDE": "child"})
+	merged := mergedEnv(devEnv{Vars: map[string]string{"VSENV_TEST_KEY_OVERRIDE": "child"}})
 	if v := envValue(merged, "VSENV_TEST_KEY_OVERRIDE"); v != "child" {
 		t.Errorf("expected child override, got %q", v)
 	}
@@ -38,7 +38,7 @@ func TestMergedEnv_OverridesParent(t *testing.T) {
 }
 
 func TestMergedEnv_AddsNewKey(t *testing.T) {
-	merged := mergedEnv(map[string]string{"VSENV_TEST_NEW_KEY": "value"})
+	merged := mergedEnv(devEnv{Vars: map[string]string{"VSENV_TEST_NEW_KEY": "value"}})
 	if v := envValue(merged, "VSENV_TEST_NEW_KEY"); v != "value" {
 		t.Errorf("expected new key in merged env, got %q", v)
 	}
@@ -46,9 +46,26 @@ func TestMergedEnv_AddsNewKey(t *testing.T) {
 
 func TestMergedEnv_PreservesParentKeys(t *testing.T) {
 	t.Setenv("VSENV_TEST_KEEP", "preserved")
-	merged := mergedEnv(map[string]string{"OTHER": "x"})
+	merged := mergedEnv(devEnv{Vars: map[string]string{"OTHER": "x"}})
 	if v := envValue(merged, "VSENV_TEST_KEEP"); v != "preserved" {
 		t.Errorf("expected parent key preserved, got %q", v)
+	}
+}
+
+func TestMergedEnv_WrapsCurrentPath(t *testing.T) {
+	t.Setenv("PATH", `C:\a`)
+	merged := mergedEnv(devEnv{PathBefore: []string{`C:\vs`}, PathAfter: []string{`C:\cmake`}})
+	if v := envValue(merged, "PATH"); v != `C:\vs;C:\a;C:\cmake` {
+		t.Errorf("PATH = %q", v)
+	}
+	count := 0
+	for _, e := range merged {
+		if strings.HasPrefix(strings.ToUpper(e), "PATH=") {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("expected a single PATH entry, got %d", count)
 	}
 }
 

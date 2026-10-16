@@ -7,73 +7,101 @@ import (
 	"testing"
 )
 
-func formatTo(t *testing.T, shell string, env map[string]string) string {
+// testDev adds C:\vs before and C:\cmake after the caller's PATH.
+func testDev() devEnv {
+	return devEnv{
+		Vars:       map[string]string{"FOO": "bar"},
+		PathBefore: []string{`C:\vs`},
+		PathAfter:  []string{`C:\cmake`},
+	}
+}
+
+func formatTo(t *testing.T, shell string, dev devEnv, curPath string) string {
 	t.Helper()
 	var b bytes.Buffer
-	if err := formatEnv(shell, env, &b); err != nil {
+	if err := formatEnv(shell, dev, curPath, &b); err != nil {
 		t.Fatalf("formatEnv(%q): %v", shell, err)
 	}
 	return b.String()
 }
 
 func TestFormatEnv_PowerShell(t *testing.T) {
-	out := formatTo(t, "powershell", map[string]string{"PATH": `C:\foo;C:\bar`, "FOO": "bar"})
-	want := "$env:FOO = 'bar'\n$env:PATH = 'C:\\foo;C:\\bar'\n"
+	out := formatTo(t, "powershell", testDev(), `C:\a`)
+	want := "$env:FOO = 'bar'\n" +
+		"$env:Path = 'C:\\vs;C:\\a;C:\\cmake'\n"
 	if out != want {
 		t.Errorf("got:\n%q\nwant:\n%q", out, want)
 	}
 }
 
+func TestFormatEnv_PowerShell_LeavesAppliedPathAlone(t *testing.T) {
+	out := formatTo(t, "powershell", testDev(), `C:\vs;C:\a;C:\cmake`)
+	if strings.Contains(out, "Path") {
+		t.Errorf("expected no PATH changes, got:\n%s", out)
+	}
+}
+
 func TestFormatEnv_Pwsh_AliasesPowerShell(t *testing.T) {
-	a := formatTo(t, "pwsh", map[string]string{"X": "1"})
-	b := formatTo(t, "powershell", map[string]string{"X": "1"})
+	a := formatTo(t, "pwsh", testDev(), "")
+	b := formatTo(t, "powershell", testDev(), "")
 	if a != b {
 		t.Errorf("pwsh and powershell should produce identical output, got\n%q\nvs\n%q", a, b)
 	}
 }
 
 func TestFormatEnv_Cmd(t *testing.T) {
-	out := formatTo(t, "cmd", map[string]string{"FOO": "bar baz"})
-	if out != "set \"FOO=bar baz\"\n" {
-		t.Errorf("unexpected cmd output: %q", out)
+	dev := devEnv{Vars: map[string]string{"FOO": "bar baz"}, PathBefore: []string{`C:\vs`}}
+	out := formatTo(t, "cmd", dev, `C:\a`)
+	want := "set \"FOO=bar baz\"\nset \"Path=C:\\vs;C:\\a\"\n"
+	if out != want {
+		t.Errorf("got:\n%q\nwant:\n%q", out, want)
 	}
 }
 
 func TestFormatEnv_Bash(t *testing.T) {
-	out := formatTo(t, "bash", map[string]string{"FOO": "bar"})
-	if out != "export FOO='bar'\n" {
-		t.Errorf("unexpected bash output: %q", out)
+	out := formatTo(t, "bash", testDev(), `C:\a`)
+	want := "export FOO='bar'\n" +
+		"export Path='C:\\vs;C:\\a;C:\\cmake'\n"
+	if out != want {
+		t.Errorf("got:\n%q\nwant:\n%q", out, want)
 	}
 }
 
 func TestFormatEnv_Fish(t *testing.T) {
-	out := formatTo(t, "fish", map[string]string{"VSINSTALLDIR": `C:\VS\`})
-	if out != "set -gx VSINSTALLDIR 'C:\\\\VS\\\\'\n" {
-		t.Errorf("unexpected fish output: %q", out)
+	dev := devEnv{
+		Vars:       map[string]string{"VSINSTALLDIR": `C:\VS\`},
+		PathBefore: []string{`C:\vs`},
+		PathAfter:  []string{`C:\cmake`},
+	}
+	out := formatTo(t, "fish", dev, `C:\a`)
+	want := "set -gx VSINSTALLDIR 'C:\\\\VS\\\\'\n" +
+		"set -gx Path 'C:\\\\vs;C:\\\\a;C:\\\\cmake'\n"
+	if out != want {
+		t.Errorf("got:\n%q\nwant:\n%q", out, want)
 	}
 }
 
 func TestFormatEnv_Nu_IsJSON(t *testing.T) {
-	out := formatTo(t, "nu", map[string]string{"PATH": `C:\foo`, "BAR": "baz"})
+	out := formatTo(t, "nu", testDev(), `C:\a`)
 	var got map[string]string
 	if err := json.Unmarshal([]byte(out), &got); err != nil {
 		t.Fatalf("nu output is not valid JSON: %v\n%s", err, out)
 	}
-	if got["PATH"] != `C:\foo` || got["BAR"] != "baz" {
+	if got["Path"] != `C:\vs;C:\a;C:\cmake` || got["FOO"] != "bar" {
 		t.Errorf("nu output values mismatch: %v", got)
 	}
 }
 
 func TestFormatEnv_UnknownShell_ReturnsError(t *testing.T) {
 	var b bytes.Buffer
-	if err := formatEnv("xonsh", map[string]string{"X": "1"}, &b); err == nil {
+	if err := formatEnv("xonsh", testDev(), "", &b); err == nil {
 		t.Error("expected error for unknown shell")
 	}
 }
 
 func TestFormatEnv_KeysSorted(t *testing.T) {
-	in := map[string]string{"Z": "1", "A": "2", "M": "3"}
-	out := formatTo(t, "bash", in)
+	dev := devEnv{Vars: map[string]string{"Z": "1", "A": "2", "M": "3"}}
+	out := formatTo(t, "bash", dev, "")
 	expectedOrder := []string{"A", "M", "Z"}
 	for i, name := range expectedOrder {
 		idx := strings.Index(out, "export "+name+"=")

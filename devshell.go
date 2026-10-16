@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -18,6 +19,34 @@ const (
 	// usage telemetry.
 	telemetryOptOut = "VSCMD_SKIP_SENDTELEMETRY"
 )
+
+// devEnv is what VsDevCmd.bat adds to the environment it started from. PATH
+// is kept as the entries added before and after the original value, so it can
+// be reapplied on top of whatever PATH the caller has at the time.
+type devEnv struct {
+	Vars       map[string]string `json:"vars"`
+	PathBefore []string          `json:"pathBefore"`
+	PathAfter  []string          `json:"pathAfter"`
+}
+
+// path returns cur with the VS entries put before and after it. Entries cur
+// already has are moved rather than skipped, so applying the env again
+// changes nothing, and applying another architecture's env puts its tools
+// ahead of the ones applied before.
+func (e devEnv) path(cur string) string {
+	vs := map[string]bool{}
+	for _, p := range slices.Concat(e.PathBefore, e.PathAfter) {
+		vs[pathEntryKey(p)] = true
+	}
+	parts := slices.Clone(e.PathBefore)
+	for _, p := range splitPath(cur) {
+		if !vs[pathEntryKey(p)] {
+			parts = append(parts, p)
+		}
+	}
+	parts = append(parts, e.PathAfter...)
+	return strings.Join(parts, string(os.PathListSeparator))
+}
 
 func captureDevShellEnv(
 	ctx context.Context,
@@ -104,14 +133,73 @@ func parseSetOutput(out string) (map[string]string, error) {
 	return env, nil
 }
 
-func diffEnv(parent, full map[string]string) map[string]string {
-	diff := map[string]string{}
+func diffEnv(parent, full map[string]string) devEnv {
+	e := devEnv{Vars: map[string]string{}}
 	for k, v := range full {
+		if strings.EqualFold(k, "PATH") {
+			continue
+		}
 		if pv, ok := parent[k]; !ok || pv != v {
-			diff[k] = v
+			e.Vars[k] = v
 		}
 	}
-	return diff
+	e.PathBefore, e.PathAfter = addedPathEntries(lookupFold(parent, "PATH"), lookupFold(full, "PATH"))
+	return e
+}
+
+// addedPathEntries returns the entries VsDevCmd.bat added before and after
+// the original PATH. It prepends most of its directories and appends a few
+// (CMake, Ninja, vcpkg), leaving the original value intact in between.
+func addedPathEntries(before, after string) ([]string, []string) {
+	if before != "" {
+		if i := strings.Index(";"+after+";", ";"+before+";"); i >= 0 {
+			return splitPath(after[:i]), splitPath(after[i+len(before):])
+		}
+	}
+	// No original PATH, or VsDevCmd.bat didn't keep it intact: put whatever
+	// is new first.
+	return missingEntries(splitPath(after), pathEntrySet(before)), nil
+}
+
+func splitPath(path string) []string {
+	var out []string
+	for _, p := range filepath.SplitList(path) {
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func missingEntries(entries []string, have map[string]bool) []string {
+	var out []string
+	for _, p := range entries {
+		if !have[pathEntryKey(p)] {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func pathEntrySet(path string) map[string]bool {
+	set := map[string]bool{}
+	for _, p := range splitPath(path) {
+		set[pathEntryKey(p)] = true
+	}
+	return set
+}
+
+func pathEntryKey(p string) string {
+	return strings.ToLower(strings.TrimRight(p, `\/`))
+}
+
+func lookupFold(m map[string]string, key string) string {
+	for k, v := range m {
+		if strings.EqualFold(k, key) {
+			return v
+		}
+	}
+	return ""
 }
 
 func parentEnvMap() map[string]string {

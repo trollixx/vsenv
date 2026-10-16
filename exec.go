@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -28,13 +29,17 @@ func ignoreCtrlC(ignore bool) {
 	_, _, _ = proc.Call(0, add)
 }
 
-func mergedEnv(diff map[string]string) []string {
+func mergedEnv(dev devEnv) []string {
 	parent := os.Environ()
-	overrides := make(map[string]struct{}, len(diff))
-	for k := range diff {
+	vars := make(map[string]string, len(dev.Vars)+1)
+	maps.Copy(vars, dev.Vars)
+	vars["Path"] = dev.path(envValue(parent, "PATH"))
+
+	overrides := make(map[string]struct{}, len(vars))
+	for k := range vars {
 		overrides[strings.ToUpper(k)] = struct{}{}
 	}
-	keep := make([]string, 0, len(parent)+len(diff))
+	keep := make([]string, 0, len(parent)+len(vars))
 	for _, e := range parent {
 		eq := strings.IndexByte(e, '=')
 		if eq <= 0 {
@@ -45,7 +50,7 @@ func mergedEnv(diff map[string]string) []string {
 		}
 		keep = append(keep, e)
 	}
-	for k, v := range diff {
+	for k, v := range vars {
 		keep = append(keep, k+"="+v)
 	}
 	return keep
@@ -86,8 +91,8 @@ func lookInEnvPath(file, pathEnv, pathExt string) (string, error) {
 	return "", fmt.Errorf("%q not found in PATH", file)
 }
 
-func execChild(ctx context.Context, args []string, diff map[string]string) error {
-	env := mergedEnv(diff)
+func execChild(ctx context.Context, args []string, dev devEnv) error {
+	env := mergedEnv(dev)
 	pathExt := envValue(env, "PATHEXT")
 	if pathExt == "" {
 		pathExt = ".COM;.EXE;.BAT;.CMD"
@@ -110,7 +115,7 @@ func execChild(ctx context.Context, args []string, diff map[string]string) error
 	return nil
 }
 
-func spawnShell(ctx context.Context, shell string, diff map[string]string) error {
+func spawnShell(ctx context.Context, shell string, dev devEnv) error {
 	autoDetected := shell == ""
 	if autoDetected {
 		shell = detectParentShell()
@@ -133,7 +138,7 @@ func spawnShell(ctx context.Context, shell string, diff map[string]string) error
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	cmd.Env = mergedEnv(diff)
+	cmd.Env = mergedEnv(dev)
 	if autoDetected {
 		fmt.Fprintf(os.Stderr, "[vsenv] launching %s (auto-detected; override with --shell)\n", shell)
 	}
