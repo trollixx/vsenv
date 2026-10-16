@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"runtime/debug"
 
 	"github.com/urfave/cli/v3"
 )
@@ -14,13 +15,27 @@ const (
 	shellFlagName = "shell"
 )
 
-var version = "0.1.0-dev" // injected at build time via -ldflags "-X main.version=..."
+var version = "dev" // injected at build time via -ldflags "-X main.version=..."
+
+// resolveVersion returns the effective version string: an explicit ldflags
+// override wins; otherwise the module version stamped by the Go toolchain
+// (set for 'go install module@version' and, since Go 1.24, for VCS builds);
+// otherwise ldflagsVersion as-is.
+func resolveVersion(ldflagsVersion string) string {
+	if ldflagsVersion != "dev" {
+		return ldflagsVersion
+	}
+	if bi, ok := debug.ReadBuildInfo(); ok && bi.Main.Version != "" && bi.Main.Version != "(devel)" {
+		return bi.Main.Version
+	}
+	return ldflagsVersion
+}
 
 func main() {
 	cmd := &cli.Command{
 		Name:    "vsenv",
 		Usage:   "Cross-shell Visual Studio environment activator",
-		Version: version,
+		Version: resolveVersion(version),
 		Commands: []*cli.Command{
 			listCmd(),
 			refreshCmd(),

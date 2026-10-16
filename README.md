@@ -26,7 +26,7 @@ gh release download --repo trollixx/vsenv --pattern vsenv-amd64.exe --output ~/b
 go install github.com/trollixx/vsenv@latest
 ```
 
-Builds from source, lands in `$GOPATH/bin`. Reports `0.1.0-dev` as the version since release-time ldflags aren't applied to local builds.
+Builds from source, lands in `$GOPATH/bin`. Reports the module version stamped by the Go toolchain (e.g. `v0.1.2`).
 
 ### From source
 
