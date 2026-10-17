@@ -162,7 +162,7 @@ func findShellExe(ctx context.Context, id, pathEnv string) (string, error) {
 	return lookInEnvPath(id+".exe", pathEnv, "")
 }
 
-// findBash locates a Windows-native bash (Git Bash, MSYS2, Cygwin). It skips
+// findBash locates a Windows-native bash (Git Bash, MSYS2). It skips
 // the WSL launchers in System32 and WindowsApps, which start Linux bash where
 // the VS environment is useless.
 func findBash(ctx context.Context, pathEnv string) (string, error) {

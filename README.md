@@ -73,7 +73,7 @@ Each architecture needs its MSVC build tools component installed (x64/x86 are in
 
 ## Shell profile
 
-To have the VS environment in every new shell, add the line for your shell to its profile. Once cached, this takes about 15 ms in PowerShell and about 70 ms in Git Bash, MSYS2, and Cygwin, where starting processes is slower.
+To have the VS environment in every new shell, add the line for your shell to its profile. Once cached, this takes about 15 ms in PowerShell and about 70 ms in Git Bash and MSYS2, where starting processes is slower.
 
 PowerShell (`$PROFILE`):
 
@@ -87,7 +87,7 @@ Nushell (`config.nu`):
 load-env (vsenv env --shell nu | from json)
 ```
 
-Git Bash, MSYS2, or Cygwin (`~/.bashrc`):
+Git Bash or MSYS2 (`~/.bashrc`):
 
 ```bash
 eval "$(vsenv env --shell bash)"
@@ -105,7 +105,7 @@ cmd has no profile; run this from a batch file (at the prompt, use `%i` instead 
 for /f "delims=" %%i in ('vsenv env --shell cmd') do @%%i
 ```
 
-Running it again, or in a nested shell, doesn't add duplicate `PATH` entries, and running it with another `--arch` puts that architecture's tools first. For bash and fish, `PATH` is converted to POSIX paths with `cygpath`, which ships with Git for Windows, MSYS2, and Cygwin.
+Running it again, or in a nested shell, doesn't add duplicate `PATH` entries, and running it with another `--arch` puts that architecture's tools first. For bash and fish, `PATH` is converted to POSIX paths with `cygpath`, which ships with Git for Windows and MSYS2.
 
 ## How it works
 

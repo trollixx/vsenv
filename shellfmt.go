@@ -44,7 +44,7 @@ func formatEnv(shell string, dev devEnv, getenv func(string) string, w io.Writer
 		_, err := w.Write(consoleBytes(w, b.String()))
 		return err
 	case "bash", "sh", "zsh":
-		// PATH in MSYS2, Git Bash and Cygwin holds POSIX paths. vsenv gets it
+		// PATH in MSYS2 and Git Bash holds POSIX paths. vsenv gets it
 		// in Windows form, and cygpath converts the result back using the
 		// shell's own mount table; if that fails, PATH stays as it was.
 		for _, k := range keys {
