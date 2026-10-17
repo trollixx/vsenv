@@ -20,10 +20,20 @@ func testDev() devEnv {
 	}
 }
 
+// pathOnly returns a getenv for a caller whose only variable is PATH.
+func pathOnly(curPath string) func(string) string {
+	return func(k string) string {
+		if strings.EqualFold(k, "PATH") {
+			return curPath
+		}
+		return ""
+	}
+}
+
 func formatTo(t *testing.T, shell string, dev devEnv, curPath string) string {
 	t.Helper()
 	var b bytes.Buffer
-	if err := formatEnv(shell, dev, curPath, &b); err != nil {
+	if err := formatEnv(shell, dev, pathOnly(curPath), &b); err != nil {
 		t.Fatalf("formatEnv(%q): %v", shell, err)
 	}
 	return b.String()
@@ -86,6 +96,23 @@ func TestFormatEnv_Bash_LeavesPathCleanedByMSYSAlone(t *testing.T) {
 	}
 }
 
+func TestFormatEnv_KeepsCallersListEntries(t *testing.T) {
+	dev := devEnv{Lists: map[string]listAdded{"INCLUDE": {Before: []string{`C:\vs\include`}}}}
+	getenv := func(k string) string {
+		if k == "INCLUDE" {
+			return `C:\mine;C:\vs\include`
+		}
+		return ""
+	}
+	var b bytes.Buffer
+	if err := formatEnv("bash", dev, getenv, &b); err != nil {
+		t.Fatal(err)
+	}
+	if want := `export INCLUDE='C:\vs\include;C:\mine'` + "\n"; b.String() != want {
+		t.Errorf("got %q, want %q", b.String(), want)
+	}
+}
+
 func TestFormatEnv_Fish(t *testing.T) {
 	dev := devEnv{
 		Vars:       map[string]string{"VSINSTALLDIR": `C:\VS\`},
@@ -113,7 +140,7 @@ func TestFormatEnv_Nu_IsJSON(t *testing.T) {
 
 func TestFormatEnv_UnknownShell_ReturnsError(t *testing.T) {
 	var b bytes.Buffer
-	if err := formatEnv("xonsh", testDev(), "", &b); err == nil {
+	if err := formatEnv("xonsh", testDev(), pathOnly(""), &b); err == nil {
 		t.Error("expected error for unknown shell")
 	}
 }

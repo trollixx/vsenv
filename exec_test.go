@@ -37,6 +37,14 @@ func TestMergedEnv_OverridesParent(t *testing.T) {
 	}
 }
 
+func TestMergedEnv_KeepsParentListEntries(t *testing.T) {
+	t.Setenv("INCLUDE", `C:\mine`)
+	merged := mergedEnv(devEnv{Lists: map[string]listAdded{"INCLUDE": {Before: []string{`C:\vs\include`}}}})
+	if v := envValue(merged, "INCLUDE"); v != `C:\vs\include;C:\mine` {
+		t.Errorf("INCLUDE = %q", v)
+	}
+}
+
 func TestMergedEnv_AddsNewKey(t *testing.T) {
 	merged := mergedEnv(devEnv{Vars: map[string]string{"VSENV_TEST_NEW_KEY": "value"}})
 	if v := envValue(merged, "VSENV_TEST_NEW_KEY"); v != "value" {

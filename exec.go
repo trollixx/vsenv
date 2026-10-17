@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"maps"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -31,8 +30,7 @@ func ignoreCtrlC(ignore bool) {
 
 func mergedEnv(dev devEnv) []string {
 	parent := os.Environ()
-	vars := make(map[string]string, len(dev.Vars)+1)
-	maps.Copy(vars, dev.Vars)
+	vars := dev.vars(func(k string) string { return envValue(parent, k) })
 	vars["Path"] = dev.path(envValue(parent, "PATH"))
 
 	overrides := make(map[string]struct{}, len(vars))

@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-const cacheSchemaVersion = 2
+const cacheSchemaVersion = 3
 
 type envCache struct {
 	Schema              int    `json:"schema"`

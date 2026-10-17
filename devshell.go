@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -29,29 +30,64 @@ const (
 
 // devEnv is what VsDevCmd.bat adds to the environment it started from. PATH
 // is kept as the entries added before and after the original value, so it can
-// be reapplied on top of whatever PATH the caller has at the time.
+// be reapplied on top of whatever PATH the caller has at the time, and so are
+// the other lists VsDevCmd.bat adds to, like INCLUDE and LIB.
 type devEnv struct {
-	Vars       map[string]string `json:"vars"`
-	PathBefore []string          `json:"pathBefore"`
-	PathAfter  []string          `json:"pathAfter"`
+	Vars       map[string]string    `json:"vars"`
+	PathBefore []string             `json:"pathBefore"`
+	PathAfter  []string             `json:"pathAfter"`
+	Lists      map[string]listAdded `json:"lists"`
 }
 
-// path returns cur with the VS entries put before and after it. Entries cur
-// already has are moved rather than skipped, so applying the env again
-// changes nothing, and applying another architecture's env puts its tools
-// ahead of the ones applied before.
+// listAdded holds the entries VsDevCmd.bat added before and after a list's
+// original value.
+type listAdded struct {
+	Before []string `json:"before"`
+	After  []string `json:"after"`
+}
+
+// isListVar reports whether VsDevCmd.bat adds entries to the variable named k
+// while keeping its value, other than PATH.
+func isListVar(k string) bool {
+	switch strings.ToUpper(k) {
+	case "INCLUDE", "EXTERNAL_INCLUDE", "LIB", "LIBPATH":
+		return true
+	}
+	return false
+}
+
+// path returns cur with the VS entries put before and after it.
 func (e devEnv) path(cur string) string {
+	return addEntries(e.PathBefore, e.PathAfter, cur)
+}
+
+// vars returns the variables to set, with each list's VS entries put around
+// the caller's value of it, which getenv returns.
+func (e devEnv) vars(getenv func(string) string) map[string]string {
+	vars := make(map[string]string, len(e.Vars)+len(e.Lists))
+	maps.Copy(vars, e.Vars)
+	for k, l := range e.Lists {
+		vars[k] = addEntries(l.Before, l.After, getenv(k))
+	}
+	return vars
+}
+
+// addEntries returns cur with before and after put around it. Entries cur
+// already has are moved rather than skipped, so applying the env again
+// changes nothing, and applying another architecture's env puts its entries
+// ahead of the ones applied before.
+func addEntries(before, after []string, cur string) string {
 	vs := map[string]bool{}
-	for _, p := range slices.Concat(e.PathBefore, e.PathAfter) {
+	for _, p := range slices.Concat(before, after) {
 		vs[pathEntryKey(p)] = true
 	}
-	parts := slices.Clone(e.PathBefore)
+	parts := slices.Clone(before)
 	for _, p := range splitPath(cur) {
 		if !vs[pathEntryKey(p)] {
 			parts = append(parts, p)
 		}
 	}
-	parts = append(parts, e.PathAfter...)
+	parts = append(parts, after...)
 	return strings.Join(parts, string(os.PathListSeparator))
 }
 
@@ -197,7 +233,7 @@ func parseSetOutput(out []byte) (map[string]string, error) {
 }
 
 func diffEnv(base, full map[string]string) devEnv {
-	e := devEnv{Vars: map[string]string{}}
+	e := devEnv{Vars: map[string]string{}, Lists: map[string]listAdded{}}
 	for k, v := range full {
 		// The __VSCMD_PREINIT_ variables hold the environment VsDevCmd started
 		// from; replayed later they'd be stale. cmd.exe sets PROMPT itself when
@@ -207,7 +243,15 @@ func diffEnv(base, full map[string]string) devEnv {
 			strings.HasPrefix(strings.ToUpper(k), preinitPrefix) {
 			continue
 		}
-		if bv, ok := base[k]; !ok || bv != v {
+		bv, ok := base[k]
+		if ok && bv == v {
+			continue
+		}
+		if isListVar(k) {
+			var l listAdded
+			l.Before, l.After = addedPathEntries(bv, v)
+			e.Lists[k] = l
+		} else {
 			e.Vars[k] = v
 		}
 	}
@@ -216,8 +260,9 @@ func diffEnv(base, full map[string]string) devEnv {
 }
 
 // addedPathEntries returns the entries VsDevCmd.bat added before and after
-// the original PATH. It prepends most of its directories and appends a few
-// (CMake, Ninja, vcpkg), leaving the original value intact in between.
+// the original value of PATH, or another list. It prepends most of its
+// directories and appends a few (to PATH: CMake, Ninja, vcpkg), leaving the
+// original value intact in between.
 func addedPathEntries(before, after string) ([]string, []string) {
 	if before != "" {
 		if i := strings.Index(";"+after+";", ";"+before+";"); i >= 0 {

@@ -201,6 +201,9 @@ func TestIntegration_GetEnv_FromLoadedShell(t *testing.T) {
 	if !slices.Equal(loaded.PathBefore, clean.PathBefore) || !slices.Equal(loaded.PathAfter, clean.PathAfter) {
 		t.Errorf("PATH entries differ:\nloaded %q\nclean  %q", loaded.PathBefore, clean.PathBefore)
 	}
+	if lib := loaded.Lists["LIB"].Before; len(lib) == 0 || !slices.Equal(lib, clean.Lists["LIB"].Before) {
+		t.Errorf("LIB entries differ:\nloaded %q\nclean  %q", lib, clean.Lists["LIB"].Before)
+	}
 }
 
 func TestIntegration_GetEnv_FullPipeline(t *testing.T) {
@@ -288,8 +291,8 @@ func TestIntegration_GetEnv_DifferentArchsCacheSeparately(t *testing.T) {
 	}
 
 	// LIB paths should differ between archs
-	if envX64.Vars["LIB"] == envX86.Vars["LIB"] {
-		t.Errorf("LIB should differ between x64 and x86, both = %q", envX64.Vars["LIB"])
+	if x64, x86 := envX64.Lists["LIB"].Before, envX86.Lists["LIB"].Before; len(x64) == 0 || slices.Equal(x64, x86) {
+		t.Errorf("LIB entries should differ between x64 and x86: %q and %q", x64, x86)
 	}
 }
 

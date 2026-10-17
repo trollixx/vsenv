@@ -176,7 +176,7 @@ func envCmd() *cli.Command {
 			if err != nil {
 				return err
 			}
-			return formatEnv(c.String(shellFlagName), env, os.Getenv("PATH"), os.Stdout)
+			return formatEnv(c.String(shellFlagName), env, os.Getenv, os.Stdout)
 		},
 	}
 }

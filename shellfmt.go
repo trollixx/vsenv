@@ -15,11 +15,13 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// formatEnv writes dev as commands for shell. curPath is the caller's PATH,
-// which the output replaces with dev.path(curPath), so sourcing it twice (or
-// in a nested shell) doesn't duplicate entries.
-func formatEnv(shell string, dev devEnv, curPath string, w io.Writer) error {
-	keys := slices.Sorted(maps.Keys(dev.Vars))
+// formatEnv writes dev as commands for shell. getenv returns the caller's
+// variables: the output puts the VS entries around its PATH and other lists,
+// so sourcing it twice (or in a nested shell) doesn't duplicate entries.
+func formatEnv(shell string, dev devEnv, getenv func(string) string, w io.Writer) error {
+	vars := dev.vars(getenv)
+	keys := slices.Sorted(maps.Keys(vars))
+	curPath := getenv("PATH")
 	path := dev.path(curPath)
 	// Left alone when unchanged, which spares bash and fish a cygpath run. The
 	// entries are compared cleaned, since MSYS2 shells clean them.
@@ -28,7 +30,7 @@ func formatEnv(shell string, dev devEnv, curPath string, w io.Writer) error {
 	switch strings.ToLower(shell) {
 	case "powershell", "pwsh":
 		for _, k := range keys {
-			fmt.Fprintf(w, "$env:%s = %s\n", k, psQuote(dev.Vars[k]))
+			fmt.Fprintf(w, "$env:%s = %s\n", k, psQuote(vars[k]))
 		}
 		if setPath {
 			fmt.Fprintf(w, "$env:Path = %s\n", psQuote(path))
@@ -36,7 +38,7 @@ func formatEnv(shell string, dev devEnv, curPath string, w io.Writer) error {
 	case "cmd", "bat":
 		var b strings.Builder
 		for _, k := range keys {
-			fmt.Fprintf(&b, "set \"%s=%s\"\n", k, dev.Vars[k])
+			fmt.Fprintf(&b, "set \"%s=%s\"\n", k, vars[k])
 		}
 		fmt.Fprintf(&b, "set \"Path=%s\"\n", path)
 		_, err := w.Write(consoleBytes(w, b.String()))
@@ -46,22 +48,20 @@ func formatEnv(shell string, dev devEnv, curPath string, w io.Writer) error {
 		// in Windows form, and cygpath converts the result back using the
 		// shell's own mount table; if that fails, PATH stays as it was.
 		for _, k := range keys {
-			fmt.Fprintf(w, "export %s=%s\n", k, shQuote(dev.Vars[k]))
+			fmt.Fprintf(w, "export %s=%s\n", k, shQuote(vars[k]))
 		}
 		if setPath {
 			fmt.Fprintf(w, "export PATH=\"$(cygpath -u -p %s || echo \"$PATH\")\"\n", shQuote(path))
 		}
 	case "fish":
 		for _, k := range keys {
-			fmt.Fprintf(w, "set -gx %s %s\n", k, fishQuote(dev.Vars[k]))
+			fmt.Fprintf(w, "set -gx %s %s\n", k, fishQuote(vars[k]))
 		}
 		if setPath {
 			fmt.Fprintf(w, "if set -l p (cygpath -u -p %s); set -gx PATH (string split : -- $p); end\n",
 				fishQuote(path))
 		}
 	case "nu", "nushell":
-		vars := make(map[string]string, len(dev.Vars)+1)
-		maps.Copy(vars, dev.Vars)
 		vars["Path"] = path
 		return json.NewEncoder(w).Encode(vars)
 	default:

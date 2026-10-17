@@ -235,6 +235,47 @@ func TestDevEnvPath_SwitchingArchPutsItsToolsFirst(t *testing.T) {
 	}
 }
 
+func TestDiffEnv_ListsKeepOriginalEntries(t *testing.T) {
+	base := map[string]string{"INCLUDE": `C:\mine`}
+	full := map[string]string{"INCLUDE": `C:\vs\include;C:\mine`, "LIB": `C:\vs\lib`, "FOO": "1"}
+	diff := diffEnv(base, full)
+	if len(diff.Vars) != 1 || diff.Vars["FOO"] != "1" {
+		t.Errorf("expected only FOO in Vars, got %v", diff.Vars)
+	}
+	want := map[string]listAdded{
+		"INCLUDE": {Before: []string{`C:\vs\include`}},
+		"LIB":     {Before: []string{`C:\vs\lib`}},
+	}
+	if len(diff.Lists) != len(want) {
+		t.Fatalf("Lists = %v, want %v", diff.Lists, want)
+	}
+	for k, w := range want {
+		if got := diff.Lists[k]; !slices.Equal(got.Before, w.Before) || !slices.Equal(got.After, w.After) {
+			t.Errorf("Lists[%s] = %+v, want %+v", k, got, w)
+		}
+	}
+}
+
+func TestDevEnvVars_PutsListEntriesAroundCallers(t *testing.T) {
+	dev := devEnv{
+		Vars:  map[string]string{"FOO": "1"},
+		Lists: map[string]listAdded{"LIB": {Before: []string{`C:\vs\lib\x64`}, After: []string{`C:\after`}}},
+	}
+	getenv := func(k string) string {
+		if k == "LIB" {
+			return `C:\mine;C:\vs\lib\x64`
+		}
+		return ""
+	}
+	vars := dev.vars(getenv)
+	if vars["FOO"] != "1" || vars["LIB"] != `C:\vs\lib\x64;C:\mine;C:\after` {
+		t.Errorf("vars = %v", vars)
+	}
+	if again := dev.vars(func(string) string { return vars["LIB"] }); again["LIB"] != vars["LIB"] {
+		t.Errorf("applying twice changed LIB: %q", again["LIB"])
+	}
+}
+
 func TestDiffEnv_DropsCmdPrompt(t *testing.T) {
 	diff := diffEnv(map[string]string{}, map[string]string{"PROMPT": "$P$G", "X": "1"})
 	if len(diff.Vars) != 1 || diff.Vars["X"] != "1" {
