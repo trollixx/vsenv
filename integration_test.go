@@ -126,6 +126,44 @@ func TestIntegration_CaptureDevShellEnv(t *testing.T) {
 	}
 }
 
+// Only catches a regression where the console code page isn't UTF-8, which
+// is the default.
+func TestIntegration_CaptureDevShellEnv_NonASCII(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping VsDevCmd.bat run in short mode")
+	}
+	requireVS(t)
+	t.Setenv("LOCALAPPDATA", t.TempDir())
+	install, err := SelectInstall(context.Background(), "")
+	if err != nil {
+		t.Skipf("no install: %v", err)
+	}
+
+	const value, entry = "José Олег 日本", `C:\Users\José\bin`
+	base := append(baseEnv(), "VSENV_TEST_NON_ASCII="+value)
+	for i, kv := range base {
+		if k, v, _ := strings.Cut(kv, "="); strings.EqualFold(k, "PATH") {
+			base[i] = k + "=" + entry + ";" + v
+		}
+	}
+	full, err := captureDevShellEnv(context.Background(), install, "x64", "x64", "", base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := full["VSENV_TEST_NON_ASCII"]; got != value {
+		t.Errorf("VSENV_TEST_NON_ASCII = %q, want %q", got, value)
+	}
+	diff := diffEnv(envMap(base), full)
+	if _, ok := diff.Vars["VSENV_TEST_NON_ASCII"]; ok {
+		t.Error("an unchanged non-ASCII variable is in the diff")
+	}
+	// Garbled, the original PATH isn't found in VsDevCmd's, so its entries
+	// end up among the VS ones.
+	if slices.ContainsFunc(diff.PathBefore, func(p string) bool { return strings.Contains(p, `\Users\Jos`) }) {
+		t.Errorf("an original PATH entry is among the VS ones: %q", diff.PathBefore)
+	}
+}
+
 func TestIntegration_GetEnv_FromLoadedShell(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping (slow: runs VsDevCmd twice)")

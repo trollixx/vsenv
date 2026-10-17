@@ -1,15 +1,31 @@
 package main
 
 import (
+	"encoding/binary"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"unicode/utf16"
 )
 
+func utf16LE(s string) []byte {
+	var out []byte
+	for _, u := range utf16.Encode([]rune(s)) {
+		out = binary.LittleEndian.AppendUint16(out, u)
+	}
+	return out
+}
+
+// setOutput returns what the temp batch file prints: noise from VsDevCmd.bat,
+// the sentinel line, then env in UTF-16 as cmd /u prints it.
+func setOutput(noise, env string) []byte {
+	return append([]byte(noise+envSentinel+"\r\n"), utf16LE(env)...)
+}
+
 func TestParseSetOutput_Basic(t *testing.T) {
-	in := "noise before\r\n" + envSentinel + "\r\nFOO=bar\r\nBAZ=qux\r\n"
+	in := setOutput("noise before\r\n", "FOO=bar\r\nBAZ=qux\r\n")
 	env, err := parseSetOutput(in)
 	if err != nil {
 		t.Fatal(err)
@@ -19,14 +35,31 @@ func TestParseSetOutput_Basic(t *testing.T) {
 	}
 }
 
+func TestParseSetOutput_NonASCII(t *testing.T) {
+	want := `C:\Users\José\Олег 日本 😀`
+	env, err := parseSetOutput(setOutput("Jos\x82\r\n", "HOME_DIR="+want+"\r\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if env["HOME_DIR"] != want {
+		t.Errorf("HOME_DIR = %q, want %q", env["HOME_DIR"], want)
+	}
+}
+
 func TestParseSetOutput_MissingSentinel(t *testing.T) {
-	if _, err := parseSetOutput("FOO=bar\n"); err == nil {
+	if _, err := parseSetOutput(utf16LE("FOO=bar\r\n")); err == nil {
 		t.Error("expected error when sentinel is missing")
 	}
 }
 
+func TestParseSetOutput_NotUTF16(t *testing.T) {
+	if _, err := parseSetOutput([]byte(envSentinel + "\r\nFOO=bar\r\n")); err == nil {
+		t.Error("expected error for output of odd length")
+	}
+}
+
 func TestParseSetOutput_ValueContainsEquals(t *testing.T) {
-	in := envSentinel + "\nKEY=a=b=c\n"
+	in := setOutput("", "KEY=a=b=c\n")
 	env, err := parseSetOutput(in)
 	if err != nil {
 		t.Fatal(err)
@@ -37,7 +70,7 @@ func TestParseSetOutput_ValueContainsEquals(t *testing.T) {
 }
 
 func TestParseSetOutput_EmptyValue(t *testing.T) {
-	in := envSentinel + "\nFOO=\nBAR=baz\n"
+	in := setOutput("", "FOO=\nBAR=baz\n")
 	env, err := parseSetOutput(in)
 	if err != nil {
 		t.Fatal(err)
@@ -51,7 +84,7 @@ func TestParseSetOutput_EmptyValue(t *testing.T) {
 }
 
 func TestParseSetOutput_SkipsMalformedLines(t *testing.T) {
-	in := envSentinel + "\nGOOD=ok\nthis-has-no-equals\n=leading-equals\nALSO=fine\n"
+	in := setOutput("", "GOOD=ok\nthis-has-no-equals\n=leading-equals\nALSO=fine\n")
 	env, err := parseSetOutput(in)
 	if err != nil {
 		t.Fatal(err)
@@ -68,7 +101,7 @@ func TestParseSetOutput_SkipsMalformedLines(t *testing.T) {
 }
 
 func TestParseSetOutput_HandlesCRLF(t *testing.T) {
-	in := envSentinel + "\r\nFOO=bar\r\nBAZ=qux\r\n"
+	in := setOutput("", "FOO=bar\r\nBAZ=qux\r\n")
 	env, _ := parseSetOutput(in)
 	if env["FOO"] != "bar" {
 		t.Errorf("CRLF not stripped: %q", env["FOO"])
@@ -277,7 +310,7 @@ func TestWriteTempBat(t *testing.T) {
 		"@echo off",
 		`call "C:\fake path\VsDevCmd.bat" -no_logo -arch=x64`,
 		envSentinel,
-		"set",
+		`"%SystemRoot%\System32\cmd.exe" /d /u /c set`,
 	}
 	for _, w := range wants {
 		if !strings.Contains(body, w) {

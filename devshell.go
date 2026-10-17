@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"unicode/utf16"
 
 	"golang.org/x/sys/windows"
 )
@@ -107,7 +109,7 @@ func captureDevShellEnv(
 		return nil, fmt.Errorf("VsDevCmd.bat failed: %w\noutput:\n%s", runErr, out.String())
 	}
 
-	env, err := parseSetOutput(out.String())
+	env, err := parseSetOutput(out.Bytes())
 	if err != nil {
 		return nil, err
 	}
@@ -152,7 +154,10 @@ func writeTempBat(vsdevcmd string, args []string) (string, error) {
 		fmt.Sprintf("call \"%s\" %s\r\n", vsdevcmd, strings.Join(args, " ")),
 		"if errorlevel 1 exit /b %errorlevel%\r\n",
 		"echo " + envSentinel + "\r\n",
-		"set\r\n",
+		// cmd writes to a pipe in the console code page, which can't hold every
+		// non-ASCII value (such as a user profile path); cmd /u writes UTF-16.
+		// It's named in full, as ComSpec can name another shell.
+		"\"%SystemRoot%\\System32\\cmd.exe\" /d /u /c set\r\n",
 	}
 	for _, line := range writes {
 		if _, writeErr := io.WriteString(f, line); writeErr != nil {
@@ -162,13 +167,22 @@ func writeTempBat(vsdevcmd string, args []string) (string, error) {
 	return f.Name(), nil
 }
 
-func parseSetOutput(out string) (map[string]string, error) {
-	_, tail, ok := strings.Cut(out, envSentinel)
+// parseSetOutput parses the temp batch file's output: whatever VsDevCmd.bat
+// printed, the sentinel line, then the environment in UTF-16 from cmd /u.
+func parseSetOutput(out []byte) (map[string]string, error) {
+	_, tail, ok := bytes.Cut(out, []byte(envSentinel+"\r\n"))
 	if !ok {
 		return nil, errors.New("env sentinel not found in VsDevCmd output")
 	}
+	if len(tail)%2 != 0 {
+		return nil, errors.New("environment printed by cmd /u isn't UTF-16")
+	}
+	units := make([]uint16, len(tail)/2)
+	for i := range units {
+		units[i] = binary.LittleEndian.Uint16(tail[2*i:])
+	}
 	env := map[string]string{}
-	for line := range strings.SplitSeq(tail, "\n") {
+	for line := range strings.SplitSeq(string(utf16.Decode(units)), "\n") {
 		line = strings.TrimRight(line, "\r")
 		if line == "" {
 			continue
