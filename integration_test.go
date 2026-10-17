@@ -9,10 +9,24 @@ import (
 	"time"
 )
 
+// requireAllVar, when set (as in CI), makes a missing Visual Studio or shell a
+// test failure rather than a skip.
+const requireAllVar = "VSENV_TEST_REQUIRE_ALL"
+
+// missingf skips the test for something it needs that's missing, or fails it
+// if requireAllVar is set.
+func missingf(t *testing.T, format string, args ...any) {
+	t.Helper()
+	if os.Getenv(requireAllVar) != "" {
+		t.Fatalf(format, args...)
+	}
+	t.Skipf(format, args...)
+}
+
 func requireVS(t *testing.T) {
 	t.Helper()
 	if _, err := os.Stat(vswhereDefault); err != nil {
-		t.Skipf("vswhere not installed at %s", vswhereDefault)
+		missingf(t, "vswhere not installed at %s", vswhereDefault)
 	}
 }
 
@@ -23,7 +37,7 @@ func firstInstall(t *testing.T) *Install {
 		t.Fatalf("vswhere: %v", err)
 	}
 	if len(installs) == 0 {
-		t.Skip("no Visual Studio installations on this machine")
+		missingf(t, "no Visual Studio installations on this machine")
 	}
 	return &installs[0]
 }
@@ -35,7 +49,7 @@ func TestIntegration_RunVsWhere(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(installs) == 0 {
-		t.Skip("no VS installations")
+		missingf(t, "no VS installations")
 	}
 	for _, i := range installs {
 		if i.InstanceID == "" {
@@ -62,7 +76,7 @@ func TestIntegration_DiscoverInstalls_WritesCache(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(a) == 0 {
-		t.Skip("no VS installs")
+		missingf(t, "no VS installs")
 	}
 
 	cachePath, err := installsCachePath()
@@ -138,7 +152,7 @@ func TestIntegration_CaptureDevShellEnv_NonASCII(t *testing.T) {
 	t.Setenv("LOCALAPPDATA", t.TempDir())
 	install, err := SelectInstall(context.Background(), "")
 	if err != nil {
-		t.Skipf("no install: %v", err)
+		missingf(t, "no install: %v", err)
 	}
 
 	const value, entry = "José Олег 日本", `C:\Users\José\bin`
@@ -175,7 +189,7 @@ func TestIntegration_GetEnv_FromLoadedShell(t *testing.T) {
 
 	install, err := SelectInstall(context.Background(), "")
 	if err != nil {
-		t.Skipf("no install: %v", err)
+		missingf(t, "no install: %v", err)
 	}
 	clean, err := GetEnv(context.Background(), install, "x64", "x64", "")
 	if err != nil {
@@ -217,7 +231,7 @@ func TestIntegration_GetEnv_FullPipeline(t *testing.T) {
 
 	install, err := SelectInstall(context.Background(), "")
 	if err != nil {
-		t.Skipf("no install: %v", err)
+		missingf(t, "no install: %v", err)
 	}
 
 	// Cold call: should run VsDevCmd.bat
@@ -273,7 +287,7 @@ func TestIntegration_GetEnv_DifferentArchsCacheSeparately(t *testing.T) {
 
 	install, err := SelectInstall(context.Background(), "")
 	if err != nil {
-		t.Skipf("no install: %v", err)
+		missingf(t, "no install: %v", err)
 	}
 
 	envX64, err := GetEnv(context.Background(), install, "x64", "x64", "")
@@ -305,7 +319,7 @@ func TestIntegration_VswhereOutput_HasExpectedFields(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(installs) == 0 {
-		t.Skip("no installs")
+		missingf(t, "no installs")
 	}
 	i := installs[0]
 	// These four are what we use in cache keys / display.
