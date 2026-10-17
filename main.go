@@ -31,7 +31,7 @@ func resolveVersion(ldflagsVersion string) string {
 func main() {
 	cmd := &cli.Command{
 		Name:    "vsenv",
-		Usage:   "Cross-shell Visual Studio environment activator",
+		Usage:   "Visual Studio developer environment for any shell",
 		Version: resolveVersion(version),
 		Commands: []*cli.Command{
 			listCmd(),
