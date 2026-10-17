@@ -7,6 +7,8 @@ import (
 	"maps"
 	"slices"
 	"strings"
+	"unicode/utf16"
+	"unicode/utf8"
 )
 
 // formatEnv writes dev as commands for shell. curPath is the caller's PATH,
@@ -60,8 +62,61 @@ func formatEnv(shell string, dev devEnv, curPath string, w io.Writer) error {
 	return nil
 }
 
+// psQuote returns s as a PowerShell expression in ASCII, since PowerShell
+// reads a program's output in the console code page, which can't hold every
+// character. Other characters are written as [char] codes, which also covers
+// the typographic quotes (as in a name like O’Neil) that would end a
+// single-quoted string.
 func psQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
+	var b strings.Builder
+	var codes []string // the non-ASCII run being collected
+	quoted := false    // inside a '...' string
+	flush := func() {
+		if len(codes) == 0 {
+			return
+		}
+		if b.Len() == 0 {
+			b.WriteString("''") // so + joins strings rather than adding numbers
+		}
+		// One term per run: PowerShell takes a long time over a long chain of
+		// + terms, as a PATH with many non-ASCII names would make.
+		if len(codes) == 1 {
+			fmt.Fprintf(&b, " + [char]%s", codes[0])
+		} else {
+			fmt.Fprintf(&b, " + (-join [char[]](%s))", strings.Join(codes, ","))
+		}
+		codes = codes[:0]
+	}
+	for _, u := range utf16.Encode([]rune(s)) {
+		if u >= utf8.RuneSelf {
+			if quoted {
+				b.WriteByte('\'')
+				quoted = false
+			}
+			codes = append(codes, fmt.Sprintf("0x%04X", u))
+			continue
+		}
+		flush()
+		if !quoted {
+			if b.Len() > 0 {
+				b.WriteString(" + ")
+			}
+			b.WriteByte('\'')
+			quoted = true
+		}
+		if u == '\'' {
+			b.WriteByte('\'')
+		}
+		b.WriteRune(rune(u))
+	}
+	flush()
+	switch {
+	case quoted:
+		b.WriteByte('\'')
+	case b.Len() == 0:
+		b.WriteString("''")
+	}
+	return b.String()
 }
 
 func shQuote(s string) string {

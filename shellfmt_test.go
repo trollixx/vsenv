@@ -3,8 +3,11 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
+	"os/exec"
 	"strings"
 	"testing"
+	"unicode/utf16"
 )
 
 // testDev adds C:\vs before and C:\cmake after the caller's PATH.
@@ -126,16 +129,55 @@ func TestFormatEnv_KeysSorted(t *testing.T) {
 
 func TestPsQuote(t *testing.T) {
 	cases := map[string]string{
-		"":             "''",
-		"foo":          "'foo'",
-		"with space":   "'with space'",
-		"it's":         "'it''s'",
-		"a'b'c":        "'a''b''c'",
-		`C:\path\with`: `'C:\path\with'`,
+		"":                "''",
+		"foo":             "'foo'",
+		"with space":      "'with space'",
+		"it's":            "'it''s'",
+		"a'b'c":           "'a''b''c'",
+		`C:\path\with`:    `'C:\path\with'`,
+		`C:\Users\O’Neil`: `'C:\Users\O' + [char]0x2019 + 'Neil'`,
+		"‘a‚":             `'' + [char]0x2018 + 'a' + [char]0x201A`,
+		"日本":              `'' + (-join [char[]](0x65E5,0x672C))`,
+		"😀'":              `'' + (-join [char[]](0xD83D,0xDE00)) + ''''`,
 	}
 	for in, want := range cases {
 		if got := psQuote(in); got != want {
 			t.Errorf("psQuote(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestPsQuote_RoundTripsInPowerShell(t *testing.T) {
+	values := []string{
+		"", "it's", `C:\Users\O’Neil\`, "‘a‚b‛ José Олег 日本 😀", "é", "$x `t \"q\"",
+		strings.Repeat(`C:\Users\Владимир\Программы\bin;`, 100),
+	}
+	// The script, and what it prints (each value's UTF-16 code units), are
+	// ASCII, so they get through in any console code page.
+	var script strings.Builder
+	for _, v := range values {
+		fmt.Fprintf(&script, "'[' + (([int[]][char[]](%s)) -join ',') + ']'\n", psQuote(v))
+	}
+	for _, shell := range []string{"powershell", "pwsh"} {
+		if _, err := exec.LookPath(shell); err != nil {
+			continue
+		}
+		out, err := exec.Command(shell, "-NoProfile", "-NonInteractive", "-Command", script.String()).Output()
+		if err != nil {
+			t.Fatalf("%s: %v", shell, err)
+		}
+		lines := strings.Fields(string(out))
+		if len(lines) != len(values) {
+			t.Fatalf("%s printed %d values, want %d:\n%s", shell, len(lines), len(values), out)
+		}
+		for i, v := range values {
+			var units []uint16
+			if jsonErr := json.Unmarshal([]byte(lines[i]), &units); jsonErr != nil {
+				t.Fatalf("%s: %v", shell, jsonErr)
+			}
+			if got := string(utf16.Decode(units)); got != v {
+				t.Errorf("%s: got %q, want %q", shell, got, v)
+			}
 		}
 	}
 }
