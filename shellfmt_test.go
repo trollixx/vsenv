@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -179,6 +180,40 @@ func TestPsQuote_RoundTripsInPowerShell(t *testing.T) {
 				t.Errorf("%s: got %q, want %q", shell, got, v)
 			}
 		}
+	}
+}
+
+func TestEncodeCodePage(t *testing.T) {
+	cases := []struct {
+		in   string
+		cp   uint32
+		want string
+	}{
+		{`C:\Users\José`, 850, "C:\\Users\\Jos\x82"},
+		{"Олег", 866, "\x8e\xab\xa5\xa3"},
+		{"Олег", 437, "????"},
+		// No best-fit lookalikes or control characters.
+		{"Łukasz →", 850, "?ukasz ?"},
+		{"’”", 437, "??"},
+		{"José", cpUTF8, "José"},
+		{"José", 54936, "Jos\xa8\xa6"}, // GB18030, which doesn't take the no-best-fit flag
+	}
+	for _, c := range cases {
+		if got := string(encodeCodePage(c.in, c.cp)); got != c.want {
+			t.Errorf("encodeCodePage(%q, %d) = %q, want %q", c.in, c.cp, got, c.want)
+		}
+	}
+}
+
+func TestConsoleBytes_LeavesTheConsoleUTF8(t *testing.T) {
+	con, err := os.OpenFile("CONOUT$", os.O_RDWR, 0) // GetConsoleMode needs read access
+	if err != nil {
+		t.Skipf("no console: %v", err)
+	}
+	defer con.Close()
+	// Go writes to a console in UTF-16, from UTF-8.
+	if got := string(consoleBytes(con, "José")); got != "José" {
+		t.Errorf("consoleBytes(console) = %q, want UTF-8", got)
 	}
 }
 
