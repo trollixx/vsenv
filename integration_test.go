@@ -23,6 +23,15 @@ func missingf(t *testing.T, format string, args ...any) {
 	t.Skipf(format, args...)
 }
 
+// otherArch returns a second target architecture to test besides arch: x86
+// on x64, as the default C++ workload installs both, and x64 elsewhere.
+func otherArch(arch string) string {
+	if arch == archX64 {
+		return archX86
+	}
+	return archX64
+}
+
 func requireVS(t *testing.T) {
 	t.Helper()
 	if _, err := os.Stat(vswhereDefault); err != nil {
@@ -119,7 +128,7 @@ func TestIntegration_CaptureDevShellEnv(t *testing.T) {
 	requireVS(t)
 	install := firstInstall(t)
 
-	env, err := captureDevShellEnv(context.Background(), install, "x64", "x64", "", baseEnv())
+	env, err := captureDevShellEnv(context.Background(), install, nativeArch(), nativeArch(), "", baseEnv())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,8 +140,8 @@ func TestIntegration_CaptureDevShellEnv(t *testing.T) {
 		}
 	}
 
-	if v := env["VSCMD_ARG_TGT_ARCH"]; v != "x64" {
-		t.Errorf("VSCMD_ARG_TGT_ARCH = %q, want x64", v)
+	if v := env["VSCMD_ARG_TGT_ARCH"]; v != nativeArch() {
+		t.Errorf("VSCMD_ARG_TGT_ARCH = %q, want %s", v, nativeArch())
 	}
 
 	for _, k := range []string{telemetryOptOut, devCmdVar, devCmdArgsVar} {
@@ -162,7 +171,7 @@ func TestIntegration_CaptureDevShellEnv_NonASCII(t *testing.T) {
 			base[i] = k + "=" + entry + ";" + v
 		}
 	}
-	full, err := captureDevShellEnv(context.Background(), install, "x64", "x64", "", base)
+	full, err := captureDevShellEnv(context.Background(), install, nativeArch(), nativeArch(), "", base)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,7 +200,7 @@ func TestIntegration_GetEnv_FromLoadedShell(t *testing.T) {
 	if err != nil {
 		missingf(t, "no install: %v", err)
 	}
-	clean, err := GetEnv(context.Background(), install, "x64", "x64", "")
+	clean, err := GetEnv(context.Background(), install, nativeArch(), nativeArch(), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,7 +215,7 @@ func TestIntegration_GetEnv_FromLoadedShell(t *testing.T) {
 	if clearErr := ClearEnvCache(); clearErr != nil {
 		t.Fatal(clearErr)
 	}
-	loaded, err := GetEnv(context.Background(), install, "x64", "x64", "")
+	loaded, err := GetEnv(context.Background(), install, nativeArch(), nativeArch(), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -236,7 +245,7 @@ func TestIntegration_GetEnv_FullPipeline(t *testing.T) {
 
 	// Cold call: should run VsDevCmd.bat
 	cold := time.Now()
-	env1, err := GetEnv(context.Background(), install, "x64", "x64", "")
+	env1, err := GetEnv(context.Background(), install, nativeArch(), nativeArch(), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -253,7 +262,7 @@ func TestIntegration_GetEnv_FullPipeline(t *testing.T) {
 
 	// Warm call: cache hit, must be fast
 	warm := time.Now()
-	env2, err := GetEnv(context.Background(), install, "x64", "x64", "")
+	env2, err := GetEnv(context.Background(), install, nativeArch(), nativeArch(), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -290,25 +299,26 @@ func TestIntegration_GetEnv_DifferentArchsCacheSeparately(t *testing.T) {
 		missingf(t, "no install: %v", err)
 	}
 
-	envX64, err := GetEnv(context.Background(), install, "x64", "x64", "")
+	native, other := nativeArch(), otherArch(nativeArch())
+	envNative, err := GetEnv(context.Background(), install, native, native, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	envX86, err := GetEnv(context.Background(), install, "x86", "x64", "")
+	envOther, err := GetEnv(context.Background(), install, other, native, "")
 	if err != nil {
-		t.Fatalf("x86 capture: %v", err)
+		t.Fatalf("%s capture: %v", other, err)
 	}
 
-	if envX64.Vars["VSCMD_ARG_TGT_ARCH"] != "x64" {
-		t.Errorf("x64 cache has wrong target arch: %q", envX64.Vars["VSCMD_ARG_TGT_ARCH"])
+	if got := envNative.Vars["VSCMD_ARG_TGT_ARCH"]; got != native {
+		t.Errorf("%s cache has the target arch %q", native, got)
 	}
-	if envX86.Vars["VSCMD_ARG_TGT_ARCH"] != "x86" {
-		t.Errorf("x86 cache has wrong target arch: %q", envX86.Vars["VSCMD_ARG_TGT_ARCH"])
+	if got := envOther.Vars["VSCMD_ARG_TGT_ARCH"]; got != other {
+		t.Errorf("%s cache has the target arch %q", other, got)
 	}
 
 	// LIB paths should differ between archs
-	if x64, x86 := envX64.Lists["LIB"].Before, envX86.Lists["LIB"].Before; len(x64) == 0 || slices.Equal(x64, x86) {
-		t.Errorf("LIB entries should differ between x64 and x86: %q and %q", x64, x86)
+	if a, b := envNative.Lists["LIB"].Before, envOther.Lists["LIB"].Before; len(a) == 0 || slices.Equal(a, b) {
+		t.Errorf("LIB entries should differ between %s and %s: %q and %q", native, other, a, b)
 	}
 }
 

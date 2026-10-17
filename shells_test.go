@@ -55,9 +55,10 @@ type testShell struct {
 	path string
 	// env is added to the shell's environment.
 	env []string
-	// profile loads the environment (twice, then for x86), builds arch.c after
-	// each architecture, and, if child is set, starts vsenv shell for x64
-	// with child as its input, which builds arch.c too. A profile or AutoRun
+	// profile loads the environment (twice, then for VSENV_TEST_ARCH), builds
+	// arch.c after each architecture, and, if child is set, starts vsenv shell
+	// (for this machine's architecture) with child as its input, which builds
+	// arch.c too. A profile or AutoRun
 	// of the user's that loads vsenv can make that pass regardless; CI's has
 	// none.
 	profile string
@@ -99,9 +100,9 @@ Build
 $first = $env:Path
 vsenv env --shell powershell | Out-String | Invoke-Expression
 'same=' + [int]($env:Path -ceq $first)
-vsenv env --shell powershell --arch x86 | Out-String | Invoke-Expression
+vsenv env --shell powershell --arch $env:VSENV_TEST_ARCH | Out-String | Invoke-Expression
 Build
-Get-Content child.ps1 | vsenv shell --arch x64
+Get-Content child.ps1 | vsenv shell
 `
 
 const psQuoting = `vsenv env --shell powershell | Out-String | Invoke-Expression
@@ -117,9 +118,9 @@ rem Expanded later, so the line stays under cmd's 8191 characters.
 setlocal EnableDelayedExpansion
 if "!Path!"=="!first!" (echo same=1) else (echo same=0)
 endlocal
-for /f "delims=" %%i in ('vsenv env --shell cmd --arch x86') do @%%i
+for /f "delims=" %%i in ('vsenv env --shell cmd --arch %VSENV_TEST_ARCH%') do @%%i
 call :build || exit /b 1
-vsenv shell --arch x64 < child.bat
+vsenv shell < child.bat
 exit /b
 :build
 cl -nologo arch.c >nul || exit /b 1
@@ -142,7 +143,7 @@ build
 let first = $env.Path
 load-env (vsenv env --shell nu | from json)
 print $"same=(if $env.Path == $first { 1 } else { 0 })"
-load-env (vsenv env --shell nu --arch x86 | from json)
+load-env (vsenv env --shell nu --arch $env.VSENV_TEST_ARCH | from json)
 build
 `
 
@@ -160,9 +161,9 @@ build
 first=$PATH
 eval "$(vsenv env --shell bash)"
 if [ "$PATH" = "$first" ]; then echo same=1; else echo same=0; fi
-eval "$(vsenv env --shell bash --arch x86)"
+eval "$(vsenv env --shell bash --arch "$VSENV_TEST_ARCH")"
 build
-vsenv shell --arch x64 < child.sh
+vsenv shell < child.sh
 `
 
 const bashQuoting = `eval "$(vsenv env --shell bash)"
@@ -178,9 +179,9 @@ build
 set -l first (string join : $PATH)
 vsenv env --shell fish | source
 if test (string join : $PATH) = "$first"; echo same=1; else; echo same=0; end
-vsenv env --shell fish --arch x86 | source
+vsenv env --shell fish --arch $VSENV_TEST_ARCH | source
 build
-vsenv shell --arch x64 < child.fish
+vsenv shell < child.fish
 `
 
 const fishQuoting = `vsenv env --shell fish | source
@@ -241,6 +242,8 @@ func testShells(t *testing.T) []testShell {
 			child: "cl -nologo arch.c >/dev/null; and echo child=(./arch.exe)\n",
 		},
 	}
+	// Shells a runner doesn't have, like MSYS2's on GitHub's Windows on ARM.
+	mayMiss := strings.Split(os.Getenv("VSENV_TEST_MAY_MISS"), ",")
 	var found []testShell
 	for _, s := range all {
 		if s.exe != "" {
@@ -249,7 +252,7 @@ func testShells(t *testing.T) []testShell {
 				continue
 			}
 		}
-		if os.Getenv(requireAllVar) != "" {
+		if os.Getenv(requireAllVar) != "" && !slices.Contains(mayMiss, s.name) {
 			t.Errorf("%s not found", s.name)
 		} else {
 			t.Logf("%s not found; skipping it", s.name)
@@ -367,13 +370,15 @@ func TestShells(t *testing.T) {
 		for _, s := range shells {
 			t.Run(s.name, func(t *testing.T) {
 				files := map[string]string{"arch.c": archC}
-				// The first load is for this machine's architecture, by default.
-				want := []string{"arch=" + nativeArch(), "same=1", "arch=x86"}
+				// By default, vsenv sets up this machine's architecture.
+				native, other := nativeArch(), otherArch(nativeArch())
+				want := []string{"arch=" + native, "same=1", "arch=" + other}
 				if s.child != "" {
 					files["child"+s.ext] = s.child
-					want = append(want, "child=x64")
+					want = append(want, "child="+native)
 				}
-				out := runShell(t, s, s.profile, files, shellEnv(s, localAppData, binDir))
+				env := append(shellEnv(s, localAppData, binDir), "VSENV_TEST_ARCH="+other)
+				out := runShell(t, s, s.profile, files, env)
 				if got := resultLines(out); !slices.Equal(got, want) {
 					t.Errorf("got %q, want %q\noutput:\n%s", got, want, out)
 				}
