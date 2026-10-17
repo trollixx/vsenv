@@ -10,10 +10,7 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-const (
-	defaultArch   = "x64"
-	shellFlagName = "shell"
-)
+const shellFlagName = "shell"
 
 var version = "dev" // injected at build time via -ldflags "-X main.version=..."
 
@@ -52,16 +49,17 @@ func main() {
 }
 
 func archFlags() []cli.Flag {
+	native := nativeArch()
 	return []cli.Flag{
 		&cli.StringFlag{
 			Name:  "arch",
 			Usage: "target architecture (x64|x86|arm64|arm)",
-			Value: defaultArch,
+			Value: native,
 		},
 		&cli.StringFlag{
 			Name:  "host-arch",
 			Usage: "host architecture (x64|x86|arm64)",
-			Value: defaultArch,
+			Value: native,
 		},
 		&cli.StringFlag{
 			Name:  "instance",

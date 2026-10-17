@@ -81,6 +81,8 @@ int main(void) {
     puts("x64");
 #elif defined(_M_IX86)
     puts("x86");
+#elif defined(_M_ARM64)
+    puts("arm64");
 #endif
     return 0;
 }
@@ -365,7 +367,8 @@ func TestShells(t *testing.T) {
 		for _, s := range shells {
 			t.Run(s.name, func(t *testing.T) {
 				files := map[string]string{"arch.c": archC}
-				want := []string{"arch=x64", "same=1", "arch=x86"}
+				// The first load is for this machine's architecture, by default.
+				want := []string{"arch=" + nativeArch(), "same=1", "arch=x86"}
 				if s.child != "" {
 					files["child"+s.ext] = s.child
 					want = append(want, "child=x64")
@@ -467,7 +470,7 @@ func seedQuotingCache(t *testing.T, localAppData string) devEnv {
 			"INCLUDE": {Before: []string{`C:\VS\include`, `C:\José's (x86)\inc`}, After: []string{`C:\after\`}},
 		},
 	}
-	path, err := envCachePath(&install, defaultArch, defaultArch, "")
+	path, err := envCachePath(&install, nativeArch(), nativeArch(), "")
 	if err != nil {
 		t.Fatal(err)
 	}

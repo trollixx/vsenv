@@ -64,12 +64,12 @@ Either way, your current shell stays clean. To load the environment into your sh
 
 | Flag | Default | |
 | --- | --- | --- |
-| `--arch` | `x64` | Target architecture: `x64`, `x86`, `arm64`, `arm` |
-| `--host-arch` | `x64` | Architecture of the compiler binaries: `x64`, `x86`, `arm64` |
+| `--arch` | this machine's | Target architecture: `x64`, `x86`, `arm64`, `arm` |
+| `--host-arch` | this machine's | Architecture of the compiler binaries: `x64`, `x86`, `arm64` |
 | `--instance` | newest install with MSVC | Instance ID from `vsenv list`; previews included |
 | `--dev-cmd-args` | | Extra `VsDevCmd.bat` arguments, e.g. `"-vcvars_ver=14.39 -winsdk=10.0.22621.0"` |
 
-Each architecture needs its MSVC build tools component installed (x64/x86 are installed by default; ARM64 isn't). vsenv reports an error if it's missing.
+By default you get native tools: on Windows on ARM, that's ARM64, even from `vsenv-amd64.exe`. Each architecture needs its MSVC build tools component installed (on an x64 machine, x64 and x86 are installed by default and ARM64 isn't). vsenv reports an error if it's missing.
 
 ## Shell profile
 
