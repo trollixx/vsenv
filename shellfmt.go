@@ -21,8 +21,9 @@ import (
 func formatEnv(shell string, dev devEnv, curPath string, w io.Writer) error {
 	keys := slices.Sorted(maps.Keys(dev.Vars))
 	path := dev.path(curPath)
-	// Left alone when unchanged, which spares bash and fish a cygpath run.
-	setPath := path != curPath
+	// Left alone when unchanged, which spares bash and fish a cygpath run. The
+	// entries are compared cleaned, since MSYS2 shells clean them.
+	setPath := !samePath(path, curPath)
 
 	switch strings.ToLower(shell) {
 	case "powershell", "pwsh":

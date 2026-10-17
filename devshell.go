@@ -264,6 +264,14 @@ func pathEntryKey(p string) string {
 	return strings.ToLower(filepath.Clean(p))
 }
 
+// samePath reports whether two PATH values have the same entries, as
+// pathEntryKey compares them.
+func samePath(a, b string) bool {
+	return slices.EqualFunc(splitPath(a), splitPath(b), func(x, y string) bool {
+		return pathEntryKey(x) == pathEntryKey(y)
+	})
+}
+
 func lookupFold(m map[string]string, key string) string {
 	for k, v := range m {
 		if strings.EqualFold(k, key) {

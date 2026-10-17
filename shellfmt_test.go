@@ -78,6 +78,14 @@ func TestFormatEnv_Bash_LeavesAppliedPathAlone(t *testing.T) {
 	}
 }
 
+func TestFormatEnv_Bash_LeavesPathCleanedByMSYSAlone(t *testing.T) {
+	dev := devEnv{PathBefore: []string{`C:\Kits\bin\\x64`}}
+	// What an MSYS2 shell passes on after the first load.
+	if out := formatTo(t, "bash", dev, `C:\Kits\bin\x64;C:\a`); strings.Contains(out, "PATH") {
+		t.Errorf("expected no PATH changes, got:\n%s", out)
+	}
+}
+
 func TestFormatEnv_Fish(t *testing.T) {
 	dev := devEnv{
 		Vars:       map[string]string{"VSINSTALLDIR": `C:\VS\`},
