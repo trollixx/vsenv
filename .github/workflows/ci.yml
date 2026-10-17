@@ -5,13 +5,20 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   build:
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, windows-11-arm]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
@@ -19,13 +26,44 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # The code is the same on both runners.
       - name: lint
+        if: matrix.os == 'windows-latest'
         uses: golangci/golangci-lint-action@v7
         with:
           version: latest
 
+      # The runners have Visual Studio, both PowerShells and Git Bash, and the
+      # x64 one MSYS2; the shell tests also need nushell and fish.
+      - name: install nushell
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NU_VERSION: '0.116.1'
+        run: |
+          $arch = if ($env:RUNNER_ARCH -eq 'ARM64') { 'aarch64' } else { 'x86_64' }
+          gh release download $env:NU_VERSION --repo nushell/nushell --pattern "*-$arch-pc-windows-msvc.zip" --dir $env:RUNNER_TEMP
+          Expand-Archive (Get-Item "$env:RUNNER_TEMP\*-$arch-pc-windows-msvc.zip") "$env:RUNNER_TEMP\nu"
+          (Get-ChildItem "$env:RUNNER_TEMP\nu" -Recurse -Filter nu.exe).DirectoryName >> $env:GITHUB_PATH
+
+      # Updates the runner's MSYS2 first, as MSYS2 only supports full upgrades.
+      - name: install fish
+        if: matrix.os == 'windows-latest'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MSYS
+          release: false
+          update: true
+          install: fish
+
+      # Windows on ARM has no MSYS2, and Go's race detector doesn't run there.
       - name: test
-        run: go test -short -race -cover ./...
+        env:
+          VSENV_TEST_REQUIRE_ALL: '1'
+          VSENV_TEST_MAY_MISS: ${{ matrix.os == 'windows-11-arm' && 'msys2-bash,msys2-fish' || '' }}
+        run: |
+          $flags = @('-cover')
+          if ($env:RUNNER_ARCH -ne 'ARM64') { $flags += '-race' }
+          go test @flags ./...
 
       - name: build
         run: go build -o vsenv.exe .
