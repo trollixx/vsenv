@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 	"unicode/utf16"
+	"unicode/utf8"
 )
 
 func utf16LE(s string) []byte {
@@ -332,7 +333,7 @@ func TestDevEnvPath_EmptyCurrent(t *testing.T) {
 }
 
 func TestWriteTempBat(t *testing.T) {
-	bat, err := writeTempBat(`C:\fake path\VsDevCmd.bat`, []string{"-no_logo", "-arch=x64"})
+	bat, err := writeTempBat()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -349,7 +350,7 @@ func TestWriteTempBat(t *testing.T) {
 	body := string(data)
 	wants := []string{
 		"@echo off",
-		`call "C:\fake path\VsDevCmd.bat" -no_logo -arch=x64`,
+		`call "%VSENV_VSDEVCMD%" %VSENV_VSDEVCMD_ARGS%`,
 		envSentinel,
 		`"%SystemRoot%\System32\cmd.exe" /d /u /c set`,
 	}
@@ -357,6 +358,10 @@ func TestWriteTempBat(t *testing.T) {
 		if !strings.Contains(body, w) {
 			t.Errorf("temp .bat missing %q\nbody:\n%s", w, body)
 		}
+	}
+	// cmd reads it in the console code page, so it can't hold a path itself.
+	if strings.ContainsFunc(body, func(r rune) bool { return r >= utf8.RuneSelf }) {
+		t.Errorf("temp .bat isn't ASCII:\n%s", body)
 	}
 }
 

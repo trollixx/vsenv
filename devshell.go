@@ -26,6 +26,11 @@ const (
 	// preinitPrefix starts the names of VsDevCmd's copies of the variables it
 	// started from, which VsDevCmd -clean_env restores.
 	preinitPrefix = "__VSCMD_PREINIT_"
+	// devCmdVar and devCmdArgsVar pass the temp batch file VsDevCmd.bat's path
+	// and arguments. cmd reads a batch file in the console code page, which
+	// can't hold every path, but holds variables in UTF-16.
+	devCmdVar     = "VSENV_VSDEVCMD"
+	devCmdArgsVar = "VSENV_VSDEVCMD_ARGS"
 )
 
 // devEnv is what VsDevCmd.bat adds to the environment it started from. PATH
@@ -127,7 +132,7 @@ func captureDevShellEnv(
 		args = append(args, strings.Fields(devArgs)...)
 	}
 
-	bat, err := writeTempBat(vsdevcmd, args)
+	bat, err := writeTempBat()
 	if err != nil {
 		return nil, err
 	}
@@ -137,7 +142,8 @@ func captureDevShellEnv(
 	// The opt-out is set even over a user's own value, which could be empty
 	// (VsDevCmd only skips telemetry for a non-empty one), and is dropped from
 	// the result, so it doesn't override that value later.
-	c.Env = append(slices.Clone(base), telemetryOptOut+"=1")
+	c.Env = append(slices.Clone(base), telemetryOptOut+"=1",
+		devCmdVar+"="+vsdevcmd, devCmdArgsVar+"="+strings.Join(args, " "))
 	var out bytes.Buffer
 	c.Stdout = &out
 	c.Stderr = &out
@@ -149,7 +155,9 @@ func captureDevShellEnv(
 	if err != nil {
 		return nil, err
 	}
-	delete(env, telemetryOptOut)
+	for _, k := range []string{telemetryOptOut, devCmdVar, devCmdArgsVar} {
+		delete(env, k)
+	}
 	return env, checkCompiler(env)
 }
 
@@ -179,7 +187,9 @@ func exists(path string) bool {
 	return err == nil
 }
 
-func writeTempBat(vsdevcmd string, args []string) (string, error) {
+// writeTempBat writes the batch file that runs VsDevCmd.bat, as named by
+// devCmdVar and devCmdArgsVar, and prints the environment it sets up.
+func writeTempBat() (string, error) {
 	f, err := os.CreateTemp("", "vsenv-*.bat")
 	if err != nil {
 		return "", err
@@ -187,7 +197,7 @@ func writeTempBat(vsdevcmd string, args []string) (string, error) {
 	defer func() { _ = f.Close() }()
 	writes := []string{
 		"@echo off\r\n",
-		fmt.Sprintf("call \"%s\" %s\r\n", vsdevcmd, strings.Join(args, " ")),
+		"call \"%" + devCmdVar + "%\" %" + devCmdArgsVar + "%\r\n",
 		"if errorlevel 1 exit /b %errorlevel%\r\n",
 		"echo " + envSentinel + "\r\n",
 		// cmd writes to a pipe in the console code page, which can't hold every

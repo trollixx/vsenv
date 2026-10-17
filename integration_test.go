@@ -121,8 +121,10 @@ func TestIntegration_CaptureDevShellEnv(t *testing.T) {
 		t.Errorf("VSCMD_ARG_TGT_ARCH = %q, want x64", v)
 	}
 
-	if _, leaked := env[telemetryOptOut]; leaked {
-		t.Errorf("%s leaked into the captured env", telemetryOptOut)
+	for _, k := range []string{telemetryOptOut, devCmdVar, devCmdArgsVar} {
+		if _, leaked := env[k]; leaked {
+			t.Errorf("%s leaked into the captured env", k)
+		}
 	}
 }
 
