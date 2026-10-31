@@ -40,18 +40,6 @@ func requireVS(t *testing.T) {
 	}
 }
 
-func firstInstall(t *testing.T) *Install {
-	t.Helper()
-	installs, err := runVsWhere(context.Background())
-	if err != nil {
-		t.Fatalf("vswhere: %v", err)
-	}
-	if len(installs) == 0 {
-		missingf(t, "no Visual Studio installations on this machine")
-	}
-	return &installs[0]
-}
-
 func TestIntegration_RunVsWhere(t *testing.T) {
 	requireVS(t)
 	installs, err := runVsWhere(context.Background())
@@ -127,7 +115,11 @@ func TestIntegration_CaptureDevShellEnv(t *testing.T) {
 		t.Skip("skipping VsDevCmd.bat run in short mode")
 	}
 	requireVS(t)
-	install := firstInstall(t)
+	t.Setenv("LOCALAPPDATA", t.TempDir())
+	install, err := SelectInstall(context.Background(), "")
+	if err != nil {
+		missingf(t, "no install: %v", err)
+	}
 
 	env, err := captureDevShellEnv(context.Background(), install, nativeArch(), nativeArch(), "", baseEnv())
 	if err != nil {
