@@ -67,3 +67,10 @@ jobs:
 
       - name: build
         run: go build -o vsenv.exe .
+
+  vulncheck:
+    runs-on: ubuntu-latest
+    env:
+      GOOS: windows
+    steps:
+      - uses: golang/govulncheck-action@v1
