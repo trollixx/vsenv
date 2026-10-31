@@ -293,7 +293,7 @@ func TestDiffEnv_DropsPreinitVars(t *testing.T) {
 }
 
 func TestCheckCompiler(t *testing.T) {
-	tools := t.TempDir()
+	tools := filepath.Join(t.TempDir(), "VS[2026]")
 	cl := filepath.Join(tools, "bin", "HostX64", "x64", "cl.exe")
 	if err := os.MkdirAll(filepath.Dir(cl), 0o755); err != nil {
 		t.Fatal(err)
@@ -313,6 +313,12 @@ func TestCheckCompiler(t *testing.T) {
 	}
 	if err := checkCompiler(env("arm64")); err == nil {
 		t.Error("arm64: expected an error for the missing cross compiler")
+	}
+	// A toolset without compilers for this host, like v142 on arm64.
+	arm64Host := env("arm64")
+	arm64Host["VSCMD_ARG_HOST_ARCH"] = "arm64"
+	if err := checkCompiler(arm64Host); err == nil {
+		t.Error("arm64 host: expected an error for the missing HostARM64")
 	}
 	if err := checkCompiler(map[string]string{"VSCMD_ARG_TGT_ARCH": "arm64"}); err != nil {
 		t.Errorf("no C++ toolset: %v", err)

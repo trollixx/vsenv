@@ -171,11 +171,14 @@ func checkCompiler(env map[string]string) error {
 	if tools == "" || host == "" || tgt == "" {
 		return nil // no C++ toolset to check
 	}
-	hostDir := filepath.Join(tools, "bin", "Host"+host)
-	if !exists(hostDir) {
+	entries, _ := os.ReadDir(filepath.Join(tools, "bin"))
+	if !slices.ContainsFunc(entries, func(e os.DirEntry) bool {
+		return e.IsDir() && strings.HasPrefix(strings.ToLower(e.Name()), "host")
+	}) {
 		return nil // a layout without Host<arch> dirs, like the VS 2015 (v140) toolset's
 	}
-	if cl := filepath.Join(hostDir, tgt, "cl.exe"); !exists(cl) {
+	// vcvars.bat skips a missing Host<arch> dir rather than failing.
+	if cl := filepath.Join(tools, "bin", "Host"+host, tgt, "cl.exe"); !exists(cl) {
 		return fmt.Errorf("this install has no MSVC compiler targeting %s on %s (%s not found); "+
 			"add the C++ build tools for %s in the Visual Studio Installer", tgt, host, cl, tgt)
 	}
