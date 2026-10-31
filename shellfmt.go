@@ -36,18 +36,31 @@ func formatEnv(shell string, dev devEnv, getenv func(string) string, w io.Writer
 			fmt.Fprintf(w, "$env:Path = %s\n", psQuote(path))
 		}
 	case "cmd", "bat":
+		var out []byte
+		var lost []string
+		set := func(k, v string) {
+			line, lossy := consoleBytes(w, fmt.Sprintf("set \"%s=%s\"\n", k, v))
+			out = append(out, line...)
+			if lossy {
+				lost = append(lost, k)
+			}
+		}
 		// Values the caller has already are left alone, as cmd would read them
 		// back with the characters its code page lacks replaced.
-		var b strings.Builder
 		for _, k := range keys {
 			if getenv(k) != vars[k] {
-				fmt.Fprintf(&b, "set \"%s=%s\"\n", k, vars[k])
+				set(k, vars[k])
 			}
 		}
 		if setPath {
-			fmt.Fprintf(&b, "set \"Path=%s\"\n", path)
+			set("Path", path)
 		}
-		_, err := w.Write(consoleBytes(w, b.String()))
+		// On stderr, so for /f doesn't run it as a command.
+		if len(lost) > 0 {
+			fmt.Fprintf(os.Stderr, "vsenv: warning: the console's code page lacks some characters in %s, "+
+				"so cmd gets ? for them; run \"chcp 65001\" first to keep them\n", strings.Join(lost, ", "))
+		}
+		_, err := w.Write(out)
 		return err
 	case "bash", "sh", "zsh":
 		// PATH in MSYS2 and Git Bash holds POSIX paths. vsenv gets it
@@ -142,30 +155,32 @@ const (
 
 // consoleBytes encodes s for w in the console's output code page, which cmd
 // reads a program's output in, as for /f does. Characters the code page lacks
-// become ?. s stays UTF-8 when w is the console itself (which Go writes to in
-// UTF-16), without a console, or with a UTF-8 one.
-func consoleBytes(w io.Writer, s string) []byte {
+// become ?, and it reports whether there were any. s stays UTF-8 when w is
+// the console itself (which Go writes to in UTF-16), without a console, or
+// with a UTF-8 one.
+func consoleBytes(w io.Writer, s string) ([]byte, bool) {
 	if f, ok := w.(*os.File); ok {
 		var mode uint32
 		if windows.GetConsoleMode(windows.Handle(f.Fd()), &mode) == nil {
-			return []byte(s)
+			return []byte(s), false
 		}
 	}
 	cp, err := windows.GetConsoleOutputCP()
 	if err != nil || cp == cpUTF8 {
-		return []byte(s)
+		return []byte(s), false
 	}
-	if b := encodeCodePage(s, cp); b != nil {
-		return b
+	if b, lossy := encodeCodePage(s, cp); b != nil {
+		return b, lossy
 	}
-	return []byte(s)
+	return []byte(s), false
 }
 
-// encodeCodePage encodes s in code page cp, or returns nil if it can't.
-func encodeCodePage(s string, cp uint32) []byte {
+// encodeCodePage encodes s in code page cp, or returns nil if it can't. It
+// also reports whether cp lacks some of s's characters.
+func encodeCodePage(s string, cp uint32) ([]byte, bool) {
 	units := utf16.Encode([]rune(s))
 	if len(units) == 0 {
-		return nil
+		return nil, false
 	}
 	proc := windows.NewLazySystemDLL("kernel32.dll").NewProc("WideCharToMultiByte")
 	convert := func(flags uint32, buf []byte) int {
@@ -182,10 +197,28 @@ func encodeCodePage(s string, cp uint32) []byte {
 		n = convert(flags, nil)
 	}
 	if n == 0 {
-		return nil
+		return nil, false
 	}
 	buf := make([]byte, n)
-	return buf[:convert(flags, buf)]
+	buf = buf[:convert(flags, buf)]
+	return buf, !slices.Equal(decodeCodePage(buf, cp), units)
+}
+
+// decodeCodePage decodes b from code page cp, as cmd reads it.
+func decodeCodePage(b []byte, cp uint32) []uint16 {
+	if len(b) == 0 {
+		return nil
+	}
+	nb := int32(len(b)) //nolint:gosec // G115: environment values, far under 2 GiB
+	n, err := windows.MultiByteToWideChar(cp, 0, &b[0], nb, nil, 0)
+	if err != nil {
+		return nil
+	}
+	u := make([]uint16, n)
+	if _, err = windows.MultiByteToWideChar(cp, 0, &b[0], nb, &u[0], n); err != nil {
+		return nil
+	}
+	return u
 }
 
 func shQuote(s string) string {

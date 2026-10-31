@@ -311,7 +311,7 @@ func buildVsenv(t *testing.T) string {
 
 // runShell runs script in shell s, in a new directory holding the given
 // files, and returns its output.
-func runShell(t *testing.T, s testShell, script string, files map[string]string, env []string) string {
+func runShell(t *testing.T, s testShell, script string, files map[string]string, env []string) (string, string) {
 	t.Helper()
 	dir := t.TempDir()
 	files["script"+s.ext] = script
@@ -347,7 +347,7 @@ func runShell(t *testing.T, s testShell, script string, files map[string]string,
 		t.Fatalf("%s: %v\nstdout:\n%s\nstderr:\n%s", s.name, err, stdout.String(), stderr.String())
 	}
 	t.Logf("stderr:\n%s", stderr.String())
-	return stdout.String()
+	return stdout.String(), stderr.String()
 }
 
 // shellEnv returns the test's environment for s, with binDir and s.path put
@@ -386,7 +386,7 @@ func TestShells(t *testing.T) {
 					want = append(want, "child="+native)
 				}
 				env := append(shellEnv(s, localAppData, binDir), "VSENV_TEST_ARCH="+other)
-				out := runShell(t, s, s.profile, files, env)
+				out, _ := runShell(t, s, s.profile, files, env)
 				if got := resultLines(out); !slices.Equal(got, want) {
 					t.Errorf("got %q, want %q\noutput:\n%s", got, want, out)
 				}
@@ -418,10 +418,15 @@ func TestShells(t *testing.T) {
 				dump := filepath.Join(t.TempDir(), "env.json")
 				env := append(shellEnv(s, localAppData, binDir),
 					dumperVar+"="+dumper, dumpEnvVar+"="+dump, "INCLUDE="+include)
-				runShell(t, s, s.quoting, map[string]string{}, env)
+				_, stderr := runShell(t, s, s.quoting, map[string]string{}, env)
 				want := applied
 				if s.lossy {
 					want = throughCodePage(t, applied, s.codePage)
+				}
+				// The values have characters code page 437 lacks.
+				warned := strings.Contains(stderr, "vsenv: warning: the console's code page")
+				if s.lossy && s.codePage == 437 && !warned {
+					t.Errorf("no warning about the characters the code page lacks; stderr:\n%s", stderr)
 				}
 				checkDump(t, dump, want, !s.msys)
 			})
@@ -517,19 +522,11 @@ func throughCodePage(t *testing.T, dev devEnv, cp uint32) devEnv {
 		return dev
 	}
 	conv := func(s string) string {
-		b := encodeCodePage(s, cp)
+		b, _ := encodeCodePage(s, cp)
 		if len(b) == 0 {
 			return s
 		}
-		n, decodeErr := windows.MultiByteToWideChar(cp, 0, &b[0], int32(len(b)), nil, 0)
-		if decodeErr != nil {
-			t.Fatal(decodeErr)
-		}
-		u := make([]uint16, n)
-		if _, decodeErr = windows.MultiByteToWideChar(cp, 0, &b[0], int32(len(b)), &u[0], n); decodeErr != nil {
-			t.Fatal(decodeErr)
-		}
-		return string(utf16.Decode(u))
+		return string(utf16.Decode(decodeCodePage(b, cp)))
 	}
 	out := devEnv{Vars: map[string]string{}}
 	for k, v := range dev.Vars {

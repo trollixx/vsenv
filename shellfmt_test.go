@@ -236,22 +236,25 @@ func TestPsQuote_RoundTripsInPowerShell(t *testing.T) {
 
 func TestEncodeCodePage(t *testing.T) {
 	cases := []struct {
-		in   string
-		cp   uint32
-		want string
+		in    string
+		cp    uint32
+		want  string
+		lossy bool
 	}{
-		{`C:\Users\José`, 850, "C:\\Users\\Jos\x82"},
-		{"Олег", 866, "\x8e\xab\xa5\xa3"},
-		{"Олег", 437, "????"},
+		{`C:\Users\José`, 850, "C:\\Users\\Jos\x82", false},
+		{"Олег", 866, "\x8e\xab\xa5\xa3", false},
+		{"Олег", 437, "????", true},
 		// No best-fit lookalikes or control characters.
-		{"Łukasz →", 850, "?ukasz ?"},
-		{"’”", 437, "??"},
-		{"José", cpUTF8, "José"},
-		{"José", 54936, "Jos\xa8\xa6"}, // GB18030, which doesn't take the no-best-fit flag
+		{"Łukasz →", 850, "?ukasz ?", true},
+		{"’”", 437, "??", true},
+		{"a?b", 437, "a?b", false},
+		{"José 😀", cpUTF8, "José 😀", false},
+		{"José 😀", 54936, "Jos\xa8\xa6 \x949\xfc6", false}, // GB18030, which doesn't take the no-best-fit flag
 	}
 	for _, c := range cases {
-		if got := string(encodeCodePage(c.in, c.cp)); got != c.want {
-			t.Errorf("encodeCodePage(%q, %d) = %q, want %q", c.in, c.cp, got, c.want)
+		b, lossy := encodeCodePage(c.in, c.cp)
+		if string(b) != c.want || lossy != c.lossy {
+			t.Errorf("encodeCodePage(%q, %d) = %q, %t, want %q, %t", c.in, c.cp, b, lossy, c.want, c.lossy)
 		}
 	}
 }
@@ -263,8 +266,8 @@ func TestConsoleBytes_LeavesTheConsoleUTF8(t *testing.T) {
 	}
 	defer con.Close()
 	// Go writes to a console in UTF-16, from UTF-8.
-	if got := string(consoleBytes(con, "José")); got != "José" {
-		t.Errorf("consoleBytes(console) = %q, want UTF-8", got)
+	if got, lossy := consoleBytes(con, "José"); string(got) != "José" || lossy {
+		t.Errorf("consoleBytes(console) = %q, %t, want UTF-8", got, lossy)
 	}
 }
 
