@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"unicode/utf16"
 	"unicode/utf8"
 )
 
@@ -295,6 +296,60 @@ func TestCheckCompiler(t *testing.T) {
 	v140["VCToolsInstallDir"] = t.TempDir() + `\`
 	if err := checkCompiler(v140); err != nil {
 		t.Errorf("v140 layout: %v", err)
+	}
+}
+
+// fakeInstall returns an install whose VsDevCmd.bat runs script.
+func fakeInstall(t *testing.T, script ...string) *Install {
+	t.Helper()
+	dir := t.TempDir()
+	tools := filepath.Join(dir, "Common7", "Tools")
+	if err := os.MkdirAll(tools, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bat := "@echo off\r\n" + strings.Join(script, "\r\n") + "\r\n"
+	if err := os.WriteFile(filepath.Join(tools, "VsDevCmd.bat"), []byte(bat), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return &Install{InstallationPath: dir}
+}
+
+func TestCaptureDevEnv_LongPath(t *testing.T) {
+	install := fakeInstall(t, `set "PATH_START=%PATH:~0,3%"`)
+	minimal := minimalPath(os.Environ())
+	for _, tc := range []struct {
+		path, start string
+	}{
+		{strings.Repeat("ж", maxCmdPath), "жжж"},
+		{strings.Repeat("ж", maxCmdPath) + ";", minimal[:3]},
+	} {
+		diff, err := captureDevEnv(t.Context(), install, "x64", "x64", "", withPath(os.Environ(), tc.path))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := diff.Vars["PATH_START"]; got != tc.start {
+			t.Errorf("a PATH of %d characters: VsDevCmd.bat ran with one starting %q, want %q",
+				len(utf16.Encode([]rune(tc.path))), got, tc.start)
+		}
+	}
+}
+
+func TestCaptureDevEnv_RetriesWithMinimalPath(t *testing.T) {
+	install := fakeInstall(t, `if not "%PATH:FAILS=%"=="%PATH%" exit /b 1`, `set "PATH=C:\vs;%PATH%"`)
+	diff, err := captureDevEnv(t.Context(), install, "x64", "x64", "", withPath(os.Environ(), `C:\FAILS`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(diff.PathBefore, []string{`C:\vs`}) || diff.PathAfter != nil {
+		t.Errorf("PATH entries: %q, %q", diff.PathBefore, diff.PathAfter)
+	}
+}
+
+func TestCaptureDevEnv_RetryFails(t *testing.T) {
+	install := fakeInstall(t, "echo PATH is %PATH%", "exit /b 1")
+	_, err := captureDevEnv(t.Context(), install, "x64", "x64", "", withPath(os.Environ(), `C:\first`))
+	if err == nil || !strings.Contains(err.Error(), `PATH is C:\first`) {
+		t.Errorf("want the error with the original PATH, got %v", err)
 	}
 }
 

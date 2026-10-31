@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -204,6 +205,71 @@ func TestIntegration_CaptureDevShellEnv_LongValue(t *testing.T) {
 	}
 	if _, ok := diffEnv(envMap(base), full).Vars["VSENV_TEST_LONG"]; ok {
 		t.Error("an unchanged long variable is in the diff")
+	}
+}
+
+// captureDevEnv relies on VsDevCmd.bat adding the same with minimalPath.
+func TestIntegration_CaptureDevShellEnv_MinimalPath(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping (slow: runs VsDevCmd four times)")
+	}
+	requireVS(t)
+	t.Setenv("LOCALAPPDATA", t.TempDir())
+	install, err := SelectInstall(context.Background(), "")
+	if err != nil {
+		missingf(t, "no install: %v", err)
+	}
+
+	base := baseEnv()
+	minimal := withPath(base, minimalPath(base))
+	for _, arch := range []string{nativeArch(), otherArch(nativeArch())} {
+		var diffs []devEnv
+		for _, b := range [][]string{base, minimal} {
+			full, captureErr := captureDevShellEnv(context.Background(), install, arch, nativeArch(), "", b)
+			if captureErr != nil {
+				t.Fatalf("%s: %v", arch, captureErr)
+			}
+			diffs = append(diffs, diffEnv(envMap(b), full))
+		}
+		if !reflect.DeepEqual(diffs[0], diffs[1]) {
+			t.Errorf("%s: VsDevCmd.bat adds\n%+v\nwith the default PATH, and\n%+v\nwith a minimal one",
+				arch, diffs[0], diffs[1])
+		}
+	}
+}
+
+// VsDevCmd.bat fails with a PATH of about 7000 characters, and leaves out the
+// SDK with one over maxCmdPath.
+func TestIntegration_CaptureDevEnv_LongPath(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping (slow: runs VsDevCmd three times)")
+	}
+	requireVS(t)
+	t.Setenv("LOCALAPPDATA", t.TempDir())
+	install, err := SelectInstall(context.Background(), "")
+	if err != nil {
+		missingf(t, "no install: %v", err)
+	}
+
+	base := baseEnv()
+	path := lookupFold(envMap(base), "PATH")
+	for _, n := range []int{7000, 9000} {
+		long := strings.Repeat(`C:\pad;`, (n-len(path))/len(`C:\pad;`)+1) + path
+		diff, captureErr := captureDevEnv(context.Background(), install, nativeArch(), nativeArch(), "",
+			withPath(base, long))
+		if captureErr != nil {
+			t.Fatalf("a PATH of %d characters: %v", len(long), captureErr)
+		}
+		if !slices.ContainsFunc(diff.PathBefore, func(p string) bool {
+			return strings.Contains(strings.ToLower(p), `\vc\tools\msvc\`)
+		}) {
+			t.Errorf("a PATH of %d characters: PathBefore lacks the MSVC bin dir: %q", len(long), diff.PathBefore)
+		}
+		if !slices.ContainsFunc(diff.Lists["LIB"].Before, func(p string) bool {
+			return strings.Contains(strings.ToLower(p), `\windows kits\`)
+		}) {
+			t.Errorf("a PATH of %d characters: LIB lacks the Windows SDK: %q", len(long), diff.Lists["LIB"].Before)
+		}
 	}
 }
 

@@ -73,12 +73,10 @@ func GetEnv(ctx context.Context, install *Install, arch, hostArch, devArgs strin
 		}
 	}
 
-	base := baseEnv()
-	full, err := captureDevShellEnv(ctx, install, arch, hostArch, devArgs, base)
+	diff, err := captureDevEnv(ctx, install, arch, hostArch, devArgs, baseEnv())
 	if err != nil {
 		return devEnv{}, err
 	}
-	diff := diffEnv(envMap(base), full)
 
 	c := envCache{
 		Schema:              cacheSchemaVersion,

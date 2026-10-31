@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"unicode/utf16"
 
 	"golang.org/x/sys/windows"
 )
@@ -34,7 +35,14 @@ const (
 	// dumpEnvArg after VsDevCmd.bat: cmd's set cuts lines at 8191 characters.
 	selfVar    = "VSENV_SELF"
 	dumpEnvArg = "__dump-env"
+	// maxCmdPath is the longest PATH VsDevCmd.bat keeps: beyond cmd's line
+	// limit, it drops PATH and the Windows SDK without failing.
+	maxCmdPath = 8191
 )
+
+// errDevCmdFailed is the error for VsDevCmd.bat failing, rather than vsenv
+// failing to run it.
+var errDevCmdFailed = errors.New("VsDevCmd.bat failed")
 
 // devEnv is what VsDevCmd.bat adds to the environment it started from. PATH
 // is kept as the entries added before and after the original value, so it can
@@ -116,6 +124,53 @@ func baseEnv() []string {
 	return os.Environ()
 }
 
+// captureDevEnv returns what VsDevCmd.bat adds to base. That doesn't depend on
+// PATH, so a PATH VsDevCmd.bat can't handle is replaced with minimalPath.
+func captureDevEnv(
+	ctx context.Context,
+	install *Install,
+	arch, hostArch, devArgs string,
+	base []string,
+) (devEnv, error) {
+	minimal := withPath(base, minimalPath(base))
+	long := len(utf16.Encode([]rune(lookupFold(envMap(base), "PATH")))) > maxCmdPath
+	if long {
+		base = minimal
+	}
+	full, err := captureDevShellEnv(ctx, install, arch, hostArch, devArgs, base)
+	// A somewhat shorter PATH makes VsDevCmd.bat fail instead, at a length
+	// that depends on the directories it adds.
+	if errors.Is(err, errDevCmdFailed) && !long {
+		retry, retryErr := captureDevShellEnv(ctx, install, arch, hostArch, devArgs, minimal)
+		if !errors.Is(retryErr, errDevCmdFailed) {
+			base, full, err = minimal, retry, retryErr
+		}
+	}
+	if err != nil {
+		return devEnv{}, err
+	}
+	return diffEnv(envMap(base), full), nil
+}
+
+// minimalPath returns a PATH of just the Windows directories, which
+// VsDevCmd.bat runs tools from.
+func minimalPath(base []string) string {
+	root := lookupFold(envMap(base), "SystemRoot")
+	return strings.Join([]string{
+		filepath.Join(root, "System32"), root, filepath.Join(root, "System32", "Wbem"),
+		filepath.Join(root, "System32", "WindowsPowerShell", "v1.0"),
+	}, string(os.PathListSeparator))
+}
+
+// withPath returns env with PATH set to path.
+func withPath(env []string, path string) []string {
+	env = slices.DeleteFunc(slices.Clone(env), func(kv string) bool {
+		k, _, _ := strings.Cut(kv, "=")
+		return strings.EqualFold(k, "PATH")
+	})
+	return append(env, "Path="+path)
+}
+
 func captureDevShellEnv(
 	ctx context.Context,
 	install *Install,
@@ -155,7 +210,7 @@ func captureDevShellEnv(
 	c.Stdout = &out
 	c.Stderr = &out
 	if runErr := c.Run(); runErr != nil {
-		return nil, fmt.Errorf("VsDevCmd.bat failed: %w\noutput:\n%s", runErr, out.String())
+		return nil, fmt.Errorf("%w: %w\noutput:\n%s", errDevCmdFailed, runErr, out.String())
 	}
 
 	env, err := parseEnvDump(out.Bytes())
