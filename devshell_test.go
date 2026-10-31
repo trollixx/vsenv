@@ -1,111 +1,78 @@
 package main
 
 import (
-	"encoding/binary"
+	"bytes"
+	"encoding/json"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
-	"unicode/utf16"
 	"unicode/utf8"
 )
 
-func utf16LE(s string) []byte {
-	var out []byte
-	for _, u := range utf16.Encode([]rune(s)) {
-		out = binary.LittleEndian.AppendUint16(out, u)
-	}
-	return out
-}
-
-// setOutput returns what the temp batch file prints: noise from VsDevCmd.bat,
-// the sentinel line, then env in UTF-16 as cmd /u prints it.
-func setOutput(noise, env string) []byte {
-	return append([]byte(noise+envSentinel+"\r\n"), utf16LE(env)...)
-}
-
-func TestParseSetOutput_Basic(t *testing.T) {
-	in := setOutput("noise before\r\n", "FOO=bar\r\nBAZ=qux\r\n")
-	env, err := parseSetOutput(in)
+// envDump returns what the temp batch file prints: noise from VsDevCmd.bat,
+// the sentinel line, then env as dumpEnv writes it.
+func envDump(t *testing.T, noise string, env ...string) []byte {
+	t.Helper()
+	data, err := json.Marshal(env)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if env["FOO"] != "bar" || env["BAZ"] != "qux" {
-		t.Errorf("unexpected env: %v", env)
-	}
+	return append([]byte(noise+envSentinel+"\r\n"), data...)
 }
 
-func TestParseSetOutput_NonASCII(t *testing.T) {
-	want := `C:\Users\José\Олег 日本 😀`
-	env, err := parseSetOutput(setOutput("Jos\x82\r\n", "HOME_DIR="+want+"\r\n"))
+func TestParseEnvDump(t *testing.T) {
+	env, err := parseEnvDump(envDump(t, "Jos\x82\r\n",
+		"FOO=bar", "KEY=a=b=c", "EMPTY=", "=C:=C:\\", "junk", `HOME_DIR=C:\Users\José\Олег 日本 😀`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if env["HOME_DIR"] != want {
-		t.Errorf("HOME_DIR = %q, want %q", env["HOME_DIR"], want)
+	want := map[string]string{"FOO": "bar", "KEY": "a=b=c", "EMPTY": "", "HOME_DIR": `C:\Users\José\Олег 日本 😀`}
+	if !maps.Equal(env, want) {
+		t.Errorf("env = %v, want %v", env, want)
 	}
 }
 
-func TestParseSetOutput_MissingSentinel(t *testing.T) {
-	if _, err := parseSetOutput(utf16LE("FOO=bar\r\n")); err == nil {
+func TestParseEnvDump_OutputAfter(t *testing.T) {
+	in := append(envDump(t, "", "FOO=bar"), "warning: GOCOVERDIR not set, no coverage data emitted\r\n"...)
+	env, err := parseEnvDump(in)
+	if err != nil || env["FOO"] != "bar" {
+		t.Errorf("env = %v, err = %v", env, err)
+	}
+}
+
+func TestParseEnvDump_MissingSentinel(t *testing.T) {
+	if _, err := parseEnvDump([]byte(`["FOO=bar"]`)); err == nil {
 		t.Error("expected error when sentinel is missing")
 	}
 }
 
-func TestParseSetOutput_NotUTF16(t *testing.T) {
-	if _, err := parseSetOutput([]byte(envSentinel + "\r\nFOO=bar\r\n")); err == nil {
-		t.Error("expected error for output of odd length")
+func TestParseEnvDump_NotJSON(t *testing.T) {
+	if _, err := parseEnvDump([]byte(envSentinel + "\r\nFOO=bar\r\n")); err == nil {
+		t.Error("expected error for output that isn't JSON")
 	}
 }
 
-func TestParseSetOutput_ValueContainsEquals(t *testing.T) {
-	in := setOutput("", "KEY=a=b=c\n")
-	env, err := parseSetOutput(in)
+// Values come back whole, unlike from cmd's set, which cuts lines at 8191
+// characters.
+func TestDumpEnv_RoundTrips(t *testing.T) {
+	long := strings.Repeat("José Олег 日本 😀;", 3000)
+	t.Setenv("VSENV_TEST_LONG", long)
+	var b bytes.Buffer
+	if err := dumpEnv(&b); err != nil {
+		t.Fatal(err)
+	}
+	env, err := parseEnvDump(append([]byte(envSentinel+"\r\n"), b.Bytes()...))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if env["KEY"] != "a=b=c" {
-		t.Errorf("expected 'a=b=c', got %q", env["KEY"])
+	if env["VSENV_TEST_LONG"] != long {
+		t.Errorf("VSENV_TEST_LONG came back %d characters long, want %d", len(env["VSENV_TEST_LONG"]), len(long))
 	}
-}
-
-func TestParseSetOutput_EmptyValue(t *testing.T) {
-	in := setOutput("", "FOO=\nBAR=baz\n")
-	env, err := parseSetOutput(in)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if v, ok := env["FOO"]; !ok || v != "" {
-		t.Errorf("expected empty FOO, got %q (ok=%v)", v, ok)
-	}
-	if env["BAR"] != "baz" {
-		t.Errorf("BAR=%q want %q", env["BAR"], "baz")
-	}
-}
-
-func TestParseSetOutput_SkipsMalformedLines(t *testing.T) {
-	in := setOutput("", "GOOD=ok\nthis-has-no-equals\n=leading-equals\nALSO=fine\n")
-	env, err := parseSetOutput(in)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if env["GOOD"] != "ok" || env["ALSO"] != "fine" {
-		t.Errorf("expected GOOD and ALSO to be parsed: %v", env)
-	}
-	if _, ok := env[""]; ok {
-		t.Error("should skip leading-equals line")
-	}
-	if len(env) != 2 {
-		t.Errorf("expected 2 entries, got %d: %v", len(env), env)
-	}
-}
-
-func TestParseSetOutput_HandlesCRLF(t *testing.T) {
-	in := setOutput("", "FOO=bar\r\nBAZ=qux\r\n")
-	env, _ := parseSetOutput(in)
-	if env["FOO"] != "bar" {
-		t.Errorf("CRLF not stripped: %q", env["FOO"])
+	if !maps.Equal(env, envMap(os.Environ())) {
+		t.Error("the dump doesn't match the environment")
 	}
 }
 
@@ -358,7 +325,7 @@ func TestWriteTempBat(t *testing.T) {
 		"@echo off",
 		`call "%VSENV_VSDEVCMD%" %VSENV_VSDEVCMD_ARGS%`,
 		envSentinel,
-		`"%SystemRoot%\System32\cmd.exe" /d /u /c set`,
+		`"%VSENV_SELF%" __dump-env`,
 	}
 	for _, w := range wants {
 		if !strings.Contains(body, w) {

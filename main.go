@@ -29,6 +29,14 @@ func resolveVersion(ldflagsVersion string) string {
 }
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == dumpEnvArg {
+		if err := dumpEnv(os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, "vsenv:", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	cmd := &cli.Command{
 		Name:    "vsenv",
 		Usage:   "Visual Studio developer environment for any shell",

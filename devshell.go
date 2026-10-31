@@ -3,7 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -13,7 +13,6 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"unicode/utf16"
 
 	"golang.org/x/sys/windows"
 )
@@ -31,6 +30,10 @@ const (
 	// can't hold every path, but holds variables in UTF-16.
 	devCmdVar     = "VSENV_VSDEVCMD"
 	devCmdArgsVar = "VSENV_VSDEVCMD_ARGS"
+	// selfVar passes vsenv's own path, for the temp batch file to run it with
+	// dumpEnvArg after VsDevCmd.bat: cmd's set cuts lines at 8191 characters.
+	selfVar    = "VSENV_SELF"
+	dumpEnvArg = "__dump-env"
 )
 
 // devEnv is what VsDevCmd.bat adds to the environment it started from. PATH
@@ -132,6 +135,10 @@ func captureDevShellEnv(
 		args = append(args, strings.Fields(devArgs)...)
 	}
 
+	self, err := os.Executable()
+	if err != nil {
+		return nil, err
+	}
 	bat, err := writeTempBat()
 	if err != nil {
 		return nil, err
@@ -143,7 +150,7 @@ func captureDevShellEnv(
 	// (VsDevCmd only skips telemetry for a non-empty one), and is dropped from
 	// the result, so it doesn't override that value later.
 	c.Env = append(slices.Clone(base), telemetryOptOut+"=1",
-		devCmdVar+"="+vsdevcmd, devCmdArgsVar+"="+strings.Join(args, " "))
+		devCmdVar+"="+vsdevcmd, devCmdArgsVar+"="+strings.Join(args, " "), selfVar+"="+self)
 	var out bytes.Buffer
 	c.Stdout = &out
 	c.Stderr = &out
@@ -151,11 +158,11 @@ func captureDevShellEnv(
 		return nil, fmt.Errorf("VsDevCmd.bat failed: %w\noutput:\n%s", runErr, out.String())
 	}
 
-	env, err := parseSetOutput(out.Bytes())
+	env, err := parseEnvDump(out.Bytes())
 	if err != nil {
 		return nil, err
 	}
-	for _, k := range []string{telemetryOptOut, devCmdVar, devCmdArgsVar} {
+	for _, k := range []string{telemetryOptOut, devCmdVar, devCmdArgsVar, selfVar} {
 		delete(env, k)
 	}
 	return env, checkCompiler(env)
@@ -191,7 +198,7 @@ func exists(path string) bool {
 }
 
 // writeTempBat writes the batch file that runs VsDevCmd.bat, as named by
-// devCmdVar and devCmdArgsVar, and prints the environment it sets up.
+// devCmdVar and devCmdArgsVar, then vsenv to print the environment it set up.
 func writeTempBat() (string, error) {
 	f, err := os.CreateTemp("", "vsenv-*.bat")
 	if err != nil {
@@ -203,10 +210,7 @@ func writeTempBat() (string, error) {
 		"call \"%" + devCmdVar + "%\" %" + devCmdArgsVar + "%\r\n",
 		"if errorlevel 1 exit /b %errorlevel%\r\n",
 		"echo " + envSentinel + "\r\n",
-		// cmd writes to a pipe in the console code page, which can't hold every
-		// non-ASCII value (such as a user profile path); cmd /u writes UTF-16.
-		// It's named in full, as ComSpec can name another shell.
-		"\"%SystemRoot%\\System32\\cmd.exe\" /d /u /c set\r\n",
+		"\"%" + selfVar + "%\" " + dumpEnvArg + "\r\n",
 	}
 	for _, line := range writes {
 		if _, writeErr := io.WriteString(f, line); writeErr != nil {
@@ -216,33 +220,24 @@ func writeTempBat() (string, error) {
 	return f.Name(), nil
 }
 
-// parseSetOutput parses the temp batch file's output: whatever VsDevCmd.bat
-// printed, the sentinel line, then the environment in UTF-16 from cmd /u.
-func parseSetOutput(out []byte) (map[string]string, error) {
+// dumpEnv writes the environment to w, as parseEnvDump reads it.
+func dumpEnv(w io.Writer) error {
+	return json.NewEncoder(w).Encode(os.Environ())
+}
+
+// parseEnvDump parses the temp batch file's output: whatever VsDevCmd.bat
+// printed, the sentinel line, then the environment from dumpEnv.
+func parseEnvDump(out []byte) (map[string]string, error) {
 	_, tail, ok := bytes.Cut(out, []byte(envSentinel+"\r\n"))
 	if !ok {
 		return nil, errors.New("env sentinel not found in VsDevCmd output")
 	}
-	if len(tail)%2 != 0 {
-		return nil, errors.New("environment printed by cmd /u isn't UTF-16")
+	var env []string
+	// Only the first value: a test binary built with -cover warns after it.
+	if err := json.NewDecoder(bytes.NewReader(tail)).Decode(&env); err != nil {
+		return nil, fmt.Errorf("parsing the environment after VsDevCmd.bat: %w", err)
 	}
-	units := make([]uint16, len(tail)/2)
-	for i := range units {
-		units[i] = binary.LittleEndian.Uint16(tail[2*i:])
-	}
-	env := map[string]string{}
-	for line := range strings.SplitSeq(string(utf16.Decode(units)), "\n") {
-		line = strings.TrimRight(line, "\r")
-		if line == "" {
-			continue
-		}
-		k, v, hasEq := strings.Cut(line, "=")
-		if !hasEq || k == "" {
-			continue
-		}
-		env[k] = v
-	}
-	return env, nil
+	return envMap(env), nil
 }
 
 func diffEnv(base, full map[string]string) devEnv {

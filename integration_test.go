@@ -145,7 +145,7 @@ func TestIntegration_CaptureDevShellEnv(t *testing.T) {
 		t.Errorf("VSCMD_ARG_TGT_ARCH = %q, want %s", v, nativeArch())
 	}
 
-	for _, k := range []string{telemetryOptOut, devCmdVar, devCmdArgsVar} {
+	for _, k := range []string{telemetryOptOut, devCmdVar, devCmdArgsVar, selfVar} {
 		if _, leaked := env[k]; leaked {
 			t.Errorf("%s leaked into the captured env", k)
 		}
@@ -187,6 +187,31 @@ func TestIntegration_CaptureDevShellEnv_NonASCII(t *testing.T) {
 	// end up among the VS ones.
 	if slices.ContainsFunc(diff.PathBefore, func(p string) bool { return strings.Contains(p, `\Users\Jos`) }) {
 		t.Errorf("an original PATH entry is among the VS ones: %q", diff.PathBefore)
+	}
+}
+
+func TestIntegration_CaptureDevShellEnv_LongValue(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping VsDevCmd.bat run in short mode")
+	}
+	requireVS(t)
+	t.Setenv("LOCALAPPDATA", t.TempDir())
+	install, err := SelectInstall(context.Background(), "")
+	if err != nil {
+		missingf(t, "no install: %v", err)
+	}
+
+	value := strings.Repeat("x", 30000)
+	base := append(baseEnv(), "VSENV_TEST_LONG="+value)
+	full, err := captureDevShellEnv(context.Background(), install, nativeArch(), nativeArch(), "", base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := full["VSENV_TEST_LONG"]; got != value {
+		t.Errorf("VSENV_TEST_LONG came back %d characters long, want %d", len(got), len(value))
+	}
+	if _, ok := diffEnv(envMap(base), full).Vars["VSENV_TEST_LONG"]; ok {
+		t.Error("an unchanged long variable is in the diff")
 	}
 }
 

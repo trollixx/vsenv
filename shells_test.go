@@ -32,6 +32,14 @@ const (
 )
 
 func TestMain(m *testing.M) {
+	// The capture runs the test binary in place of vsenv.
+	if len(os.Args) == 2 && os.Args[1] == dumpEnvArg {
+		if err := dumpEnv(os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
 	if out := os.Getenv(dumpEnvVar); out != "" {
 		data, err := json.Marshal(envMap(os.Environ()))
 		if err == nil {
