@@ -482,7 +482,8 @@ func seedQuotingCache(t *testing.T, localAppData string) devEnv {
 	data, err := json.Marshal(envCache{
 		Schema:     cacheSchemaVersion,
 		InstanceID: install.InstanceID,
-		StateTime:  instanceStateTime(install.InstanceID),
+		Instances:  instanceStateTime("*"),
+		SDKs:       sdkStateTime(),
 		Env:        dev,
 	})
 	if err != nil {

@@ -113,7 +113,7 @@ vsenv finds Visual Studio with `vswhere.exe`. For each combination of install, a
 
 `VsDevCmd.bat` runs in your default Windows environment (what programs started from the Start menu get), not the environment of the shell that ran vsenv. That way the cache comes out the same even if that shell already has the VS environment loaded.
 
-Each later run applies those changes on top of your current values, so it keeps your own entries and picks up any changes made since the capture. The cache rebuilds automatically after Visual Studio is installed, updated, or modified in the Visual Studio Installer. `vsenv refresh` forces a rebuild.
+Each later run applies those changes on top of your current values, so it keeps your own entries and picks up any changes made since the capture. The cache rebuilds automatically after the Visual Studio Installer changes any install, and after a Windows SDK version is added or removed. `vsenv refresh` forces a rebuild.
 
 `VsDevCmd.bat` normally launches PowerShell to send usage telemetry. vsenv sets `VSCMD_SKIP_SENDTELEMETRY` while it runs `VsDevCmd.bat` to skip that, and leaves the variable out of the environment it applies.
 

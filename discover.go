@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"time"
+
+	"golang.org/x/sys/windows/registry"
 )
 
 const vswhereDefault = `C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe`
@@ -187,4 +189,34 @@ func instanceStateTime(instanceID string) time.Time {
 		}
 	}
 	return latest
+}
+
+// sdkStateTime returns when a version was last added to or removed from the
+// Windows 10+ SDK that VsDevCmd.bat finds, looked up the way it does, or the
+// zero time if there's none.
+func sdkStateTime() time.Time {
+	for _, k := range []struct {
+		root registry.Key
+		path string
+	}{
+		{registry.LOCAL_MACHINE, `SOFTWARE\Wow6432Node`},
+		{registry.CURRENT_USER, `SOFTWARE\Wow6432Node`},
+		{registry.LOCAL_MACHINE, `SOFTWARE`},
+		{registry.CURRENT_USER, `SOFTWARE`},
+	} {
+		key, err := registry.OpenKey(k.root, k.path+`\Microsoft\Microsoft SDKs\Windows\v10.0`, registry.QUERY_VALUE)
+		if err != nil {
+			continue
+		}
+		dir, _, err := key.GetStringValue("InstallationFolder")
+		_ = key.Close()
+		if err != nil || dir == "" {
+			continue
+		}
+		if info, statErr := os.Stat(filepath.Join(dir, "Include")); statErr == nil {
+			return info.ModTime()
+		}
+		return time.Time{}
+	}
+	return time.Time{}
 }

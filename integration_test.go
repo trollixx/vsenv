@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -186,6 +187,34 @@ func TestIntegration_CaptureDevShellEnv_NonASCII(t *testing.T) {
 	// end up among the VS ones.
 	if slices.ContainsFunc(diff.PathBefore, func(p string) bool { return strings.Contains(p, `\Users\Jos`) }) {
 		t.Errorf("an original PATH entry is among the VS ones: %q", diff.PathBefore)
+	}
+}
+
+// sdkStateTime finds the SDK that VsDevCmd.bat uses.
+func TestIntegration_SDKStateTime(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping VsDevCmd.bat run in short mode")
+	}
+	requireVS(t)
+	t.Setenv("LOCALAPPDATA", t.TempDir())
+	install, err := SelectInstall(context.Background(), "")
+	if err != nil {
+		missingf(t, "no install: %v", err)
+	}
+	env, err := captureDevShellEnv(context.Background(), install, nativeArch(), nativeArch(), "", baseEnv())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sdk := lookupFold(env, "WindowsSdkDir")
+	if sdk == "" {
+		missingf(t, "no Windows SDK")
+	}
+	info, err := os.Stat(filepath.Join(sdk, "Include"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := sdkStateTime(); !got.Equal(info.ModTime()) {
+		t.Errorf("sdkStateTime() = %v, want %v, %s's", got, info.ModTime(), sdk)
 	}
 }
 

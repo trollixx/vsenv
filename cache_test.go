@@ -81,6 +81,7 @@ func TestGetEnv_CacheHit_SkipsDevCmd(t *testing.T) {
 		InstallationVersion: install.InstallationVersion,
 		Arch:                "x64",
 		HostArch:            "x64",
+		SDKs:                sdkStateTime(),
 		Env:                 devEnv{Vars: map[string]string{"FOO": "bar"}, PathBefore: []string{`C:\fake`}},
 	}
 	data, _ := json.MarshalIndent(preseeded, "", "  ")
@@ -128,13 +129,17 @@ func TestGetEnv_InstanceModified_ForcesRebuild(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cached := envCache{Schema: cacheSchemaVersion, Env: devEnv{Vars: map[string]string{"FOO": "old"}}}
+	cached := envCache{
+		Schema: cacheSchemaVersion,
+		SDKs:   sdkStateTime(),
+		Env:    devEnv{Vars: map[string]string{"FOO": "old"}},
+	}
 	data, _ := json.Marshal(cached)
 	if writeErr := os.WriteFile(path, data, 0o600); writeErr != nil {
 		t.Fatal(writeErr)
 	}
-	// The VS Installer touched the instance after the cache was written.
-	writeInstanceState(t, "x", time.Now().Add(time.Hour))
+	// The VS Installer touched another instance after the cache was written.
+	writeInstanceState(t, "other", time.Now().Add(time.Hour))
 
 	// As with a stale schema, the rebuild fails on the fake install path; what
 	// matters is that the cached value wasn't returned.
@@ -157,7 +162,8 @@ func TestGetEnv_FutureInstanceState_StillHits(t *testing.T) {
 	}
 	cached := envCache{
 		Schema:    cacheSchemaVersion,
-		StateTime: instanceStateTime("x"),
+		Instances: instanceStateTime("*"),
+		SDKs:      sdkStateTime(),
 		Env:       devEnv{Vars: map[string]string{"FOO": "cached"}},
 	}
 	data, _ := json.Marshal(cached)
@@ -171,6 +177,32 @@ func TestGetEnv_FutureInstanceState_StillHits(t *testing.T) {
 	}
 	if got.Vars["FOO"] != "cached" {
 		t.Errorf("expected the cached env, got %v", got)
+	}
+}
+
+func TestGetEnv_SDKsChanged_ForcesRebuild(t *testing.T) {
+	t.Setenv("LOCALAPPDATA", t.TempDir())
+	t.Setenv("ProgramData", t.TempDir())
+	install := &Install{InstanceID: "x", InstallationVersion: "1.0"}
+
+	path, err := envCachePath(install, "x64", "x64", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cached := envCache{
+		Schema:    cacheSchemaVersion,
+		Instances: instanceStateTime("*"),
+		SDKs:      sdkStateTime().Add(-time.Hour),
+		Env:       devEnv{Vars: map[string]string{"FOO": "old"}},
+	}
+	data, _ := json.Marshal(cached)
+	if writeErr := os.WriteFile(path, data, 0o600); writeErr != nil {
+		t.Fatal(writeErr)
+	}
+
+	got, err := GetEnv(context.Background(), install, "x64", "x64", "")
+	if err == nil && got.Vars["FOO"] == "old" {
+		t.Error("cache older than the SDKs should have been rejected")
 	}
 }
 

@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-const cacheSchemaVersion = 3
+const cacheSchemaVersion = 4
 
 type envCache struct {
 	Schema              int    `json:"schema"`
@@ -21,8 +21,11 @@ type envCache struct {
 	Arch                string `json:"arch"`
 	HostArch            string `json:"hostArch"`
 	DevCmdArgs          string `json:"devCmdArgs"`
-	// StateTime is instanceStateTime of the instance before the capture.
-	StateTime time.Time `json:"stateTime"`
+	// Instances and SDKs are when any VS instance and the Windows SDKs changed
+	// before the capture: VsDevCmd.bat uses the newest SDK, which another
+	// instance or an SDK installer may have added or removed.
+	Instances time.Time `json:"instances"`
+	SDKs      time.Time `json:"sdks"`
 	Env       devEnv    `json:"env"`
 }
 
@@ -61,10 +64,11 @@ func GetEnv(ctx context.Context, install *Install, arch, hostArch, devArgs strin
 
 	// Taken before the capture, so a change the VS Installer makes during it
 	// still invalidates the result.
-	stateTime := instanceStateTime(install.InstanceID)
+	instances, sdks := instanceStateTime("*"), sdkStateTime()
 	if data, readErr := os.ReadFile(cachePath); readErr == nil {
 		var c envCache
-		if json.Unmarshal(data, &c) == nil && c.Schema == cacheSchemaVersion && c.StateTime.Equal(stateTime) {
+		if json.Unmarshal(data, &c) == nil && c.Schema == cacheSchemaVersion &&
+			c.Instances.Equal(instances) && c.SDKs.Equal(sdks) {
 			return c.Env, nil
 		}
 	}
@@ -83,7 +87,8 @@ func GetEnv(ctx context.Context, install *Install, arch, hostArch, devArgs strin
 		Arch:                arch,
 		HostArch:            hostArch,
 		DevCmdArgs:          devArgs,
-		StateTime:           stateTime,
+		Instances:           instances,
+		SDKs:                sdks,
 		Env:                 diff,
 	}
 	if data, marshalErr := json.MarshalIndent(c, "", "  "); marshalErr == nil {
