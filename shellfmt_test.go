@@ -113,6 +113,22 @@ func TestFormatEnv_KeepsCallersListEntries(t *testing.T) {
 	}
 }
 
+func TestFormatEnv_Cmd_LeavesWhatTheCallerHasAlone(t *testing.T) {
+	dev := devEnv{
+		Vars:       map[string]string{"FOO": "bar", "NEW": "1"},
+		PathBefore: []string{`C:\vs`},
+		Lists:      map[string]listAdded{"INCLUDE": {Before: []string{`C:\vs\include`}}},
+	}
+	caller := map[string]string{"FOO": "bar", "INCLUDE": `C:\vs\include;C:\mine`, "PATH": `C:\vs;C:\a`}
+	var b bytes.Buffer
+	if err := formatEnv("cmd", dev, func(k string) string { return caller[k] }, &b); err != nil {
+		t.Fatal(err)
+	}
+	if want := "set \"NEW=1\"\n"; b.String() != want {
+		t.Errorf("got %q, want %q", b.String(), want)
+	}
+}
+
 func TestFormatEnv_Fish(t *testing.T) {
 	dev := devEnv{
 		Vars:       map[string]string{"VSINSTALLDIR": `C:\VS\`},

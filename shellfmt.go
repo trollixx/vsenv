@@ -36,11 +36,17 @@ func formatEnv(shell string, dev devEnv, getenv func(string) string, w io.Writer
 			fmt.Fprintf(w, "$env:Path = %s\n", psQuote(path))
 		}
 	case "cmd", "bat":
+		// Values the caller has already are left alone, as cmd would read them
+		// back with the characters its code page lacks replaced.
 		var b strings.Builder
 		for _, k := range keys {
-			fmt.Fprintf(&b, "set \"%s=%s\"\n", k, vars[k])
+			if getenv(k) != vars[k] {
+				fmt.Fprintf(&b, "set \"%s=%s\"\n", k, vars[k])
+			}
 		}
-		fmt.Fprintf(&b, "set \"Path=%s\"\n", path)
+		if setPath {
+			fmt.Fprintf(&b, "set \"Path=%s\"\n", path)
+		}
 		_, err := w.Write(consoleBytes(w, b.String()))
 		return err
 	case "bash", "sh", "zsh":
