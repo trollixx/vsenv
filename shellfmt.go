@@ -35,7 +35,7 @@ func formatEnv(shell string, dev devEnv, getenv func(string) string, w io.Writer
 		if setPath {
 			fmt.Fprintf(w, "$env:Path = %s\n", psQuote(path))
 		}
-	case "cmd", "bat":
+	case "cmd":
 		var out []byte
 		var lost []string
 		set := func(k, v string) {
