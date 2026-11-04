@@ -37,7 +37,14 @@ func main() {
 		return
 	}
 
-	cmd := &cli.Command{
+	if err := newApp().Run(context.Background(), os.Args); err != nil {
+		fmt.Fprintln(os.Stderr, "vsenv:", err)
+		os.Exit(1)
+	}
+}
+
+func newApp() *cli.Command {
+	app := &cli.Command{
 		Name:    "vsenv",
 		Usage:   "Visual Studio developer environment for any shell",
 		Version: resolveVersion(version),
@@ -49,11 +56,16 @@ func main() {
 			envCmd(),
 		},
 	}
+	// Otherwise cli prints usage errors as well as main, along with the help.
+	_ = app.Walk(func(c *cli.Command) error {
+		c.OnUsageError = usageError
+		return nil
+	})
+	return app
+}
 
-	if err := cmd.Run(context.Background(), os.Args); err != nil {
-		fmt.Fprintln(os.Stderr, "vsenv:", err)
-		os.Exit(1)
-	}
+func usageError(_ context.Context, cmd *cli.Command, err error, _ bool) error {
+	return fmt.Errorf("%w (see %q)", err, cmd.FullName()+" --help")
 }
 
 func archFlags() []cli.Flag {
